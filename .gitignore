@@ -1,0 +1,9 @@
+.tools/
+**/bin/
+**/obj/
+**/dist/
+**/dist-*/
+**/publish/
+**/monitoring-publish/
+**/.dotnet-*/
+**/.nuget-*/

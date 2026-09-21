@@ -1,0 +1,89 @@
+# LeanBrowser - lista base de anuncios e rastreadores
+#
+# Formato: um dominio por linha. Linhas com '#' sao comentarios.
+# Cada dominio vira DOIS filtros nativos no motor WebView2:
+#     *://<dominio>/*
+#     *://*.<dominio>/*
+#
+# Voce pode sobrescrever esta lista sem recompilar, criando o arquivo:
+#     %APPDATA%\LeanBrowser\blocklist.txt
+# Se esse arquivo existir, ele substitui a lista embutida.
+
+# --- Ad exchanges / SSP / DSP ---------------------------------------------
+doubleclick.net
+googlesyndication.com
+googleadservices.com
+googletagservices.com
+adservice.google.com
+adnxs.com
+adsrvr.org
+rubiconproject.com
+pubmatic.com
+openx.net
+casalemedia.com
+bidswitch.net
+smartadserver.com
+criteo.com
+criteo.net
+teads.tv
+sharethrough.com
+33across.com
+adform.net
+zedo.com
+amazon-adsystem.com
+media.net
+indexww.com
+yieldmo.com
+sonobi.com
+gumgum.com
+
+# --- Native ads / conteudo patrocinado ------------------------------------
+taboola.com
+outbrain.com
+revcontent.com
+mgid.com
+zergnet.com
+plista.com
+
+# --- Adware agressivo / pop-ups -------------------------------------------
+propellerads.com
+popads.net
+popcash.net
+adcash.com
+onesignal.com
+
+# --- Analytics / rastreamento comportamental ------------------------------
+google-analytics.com
+googletagmanager.com
+scorecardresearch.com
+quantserve.com
+moatads.com
+doubleverify.com
+hotjar.com
+hotjar.io
+mixpanel.com
+segment.io
+segment.com
+amplitude.com
+fullstory.com
+mouseflow.com
+crazyegg.com
+chartbeat.com
+clarity.ms
+mc.yandex.ru
+
+# --- Pixels de conversao de redes sociais ---------------------------------
+connect.facebook.net
+analytics.tiktok.com
+ct.pinterest.com
+ads.linkedin.com
+bat.bing.com
+analytics.twitter.com
+static.ads-twitter.com
+
+# --- Atribuicao mobile / deep-link tracking -------------------------------
+branch.io
+appsflyer.com
+adjust.com
+kochava.com
+singular.net

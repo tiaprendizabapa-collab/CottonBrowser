@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CottonBrowser · Monitoramento</title>
+  <style>
+    :root { color-scheme: dark; --bg:#111722; --surface:#1d2735; --surface2:#263447; --line:#35465d; --ink:#f3f6fb; --muted:#aab8ca; --accent:#70a9ff; }
+    * { box-sizing:border-box; } body { margin:0; background:linear-gradient(135deg,#111722,#172236); color:var(--ink); font:14px system-ui, sans-serif; }
+    header { padding:24px clamp(20px,5vw,64px) 12px; display:flex; justify-content:space-between; align-items:center; gap:18px; }
+    h1 { margin:0; font-size:22px; } .subtitle { color:var(--muted); margin-top:5px; }
+    main { max-width:1100px; margin:auto; padding:0 clamp(20px,5vw,64px) 48px; }
+    .auth { display:flex; gap:8px; margin:16px 0 22px; } input, button { border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:var(--surface); color:var(--ink); }
+    input { flex:1; min-width:220px; } button { cursor:pointer; background:var(--accent); color:#0c1728; border-color:transparent; font-weight:650; } button:hover { filter:brightness(1.08); }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; } .card { background:rgba(29,39,53,.9); border:1px solid var(--line); border-radius:16px; padding:18px; box-shadow:0 12px 35px #0003; }
+    h2 { margin:0 0 14px; font-size:16px; } table { border-collapse:collapse; width:100%; } th,td { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line); } th { color:var(--muted); font-size:12px; }
+    #live { max-height:300px; overflow:auto; } .event { padding:10px 0; border-bottom:1px solid var(--line); } .event small { color:var(--muted); display:block; margin-top:3px; }
+    .status { color:var(--muted); font-size:12px; } @media(max-width:760px){ .grid{grid-template-columns:1fr;} header{display:block;} }
+  </style>
+</head>
+<body>
+  <header><div><h1>CottonBrowser</h1><div class="subtitle">Painel de monitoramento · acesso Admin</div></div><span id="status" class="status">Desconectado</span></header>
+  <main>
+    <div class="auth"><input id="token" type="password" placeholder="Token Admin" autocomplete="off"><button id="connect">Conectar</button></div>
+    <div class="grid">
+      <section class="card"><h2>Sites mais acessados</h2><table><thead><tr><th>Domínio</th><th>Acessos</th></tr></thead><tbody id="sites"><tr><td colspan="2">Informe o token Admin.</td></tr></tbody></table></section>
+      <section class="card"><h2>Pesquisas recentes</h2><table><thead><tr><th>Quando</th><th>Termo</th><th>Domínio</th></tr></thead><tbody id="searches"><tr><td colspan="3">Aguardando conexão.</td></tr></tbody></table></section>
+    </div>
+    <section class="card" style="margin-top:16px"><h2>Eventos em tempo real</h2><div id="live"><div class="status">Conecte-se para acompanhar novas navegações.</div></div></section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script>
+    let token = '', connection;
+    const $ = id => document.getElementById(id);
+    const headers = () => ({ Authorization: `Bearer ${token}` });
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    if (location.protocol === 'file:') {
+      $('status').textContent = 'Abra http://localhost:5270/admin.html com o servidor ligado';
+      $('connect').disabled = true;
+    }
+    async function refresh() {
+      const options = { headers: headers() };
+      const [sites, searches] = await Promise.all([
+        fetch('/api/admin/reports/top-sites', options).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        fetch('/api/admin/reports/searches?limit=30', options).then(r => r.ok ? r.json() : Promise.reject(r.status))
+      ]);
+      $('sites').innerHTML = sites.map(x => `<tr><td>${escapeHtml(x.domain)}</td><td>${x.accesses}</td></tr>`).join('') || '<tr><td colspan="2">Sem dados.</td></tr>';
+      $('searches').innerHTML = searches.map(x => `<tr><td>${new Date(x.occurredAt).toLocaleTimeString()}</td><td>${escapeHtml(x.searchTerm)}</td><td>${escapeHtml(x.domain)}</td></tr>`).join('') || '<tr><td colspan="3">Sem dados.</td></tr>';
+    }
+    function addLive(item) {
+      const row = document.createElement('div'); row.className='event';
+      row.innerHTML = `<b>${escapeHtml(item.userId)}</b> · ${escapeHtml(item.domain)}<small>${escapeHtml(item.url)} · ${new Date(item.occurredAt).toLocaleString()}</small>`;
+      $('live').prepend(row); while ($('live').children.length > 40) $('live').lastElementChild.remove();
+    }
+    $('connect').onclick = async () => {
+      token = $('token').value.trim(); if (!token) return;
+      try {
+        await refresh();
+        $('status').textContent='Conectado · atualizando relatórios';
+        setInterval(() => refresh().catch(() => {}), 10000);
+      } catch (error) {
+        $('status').textContent=`Falha na API (${error}). Confira o token e a porta 5270`;
+        return;
+      }
+      try {
+        if (connection) await connection.stop();
+        if (typeof signalR === 'undefined') throw new Error('SignalR indisponível; usando atualização periódica');
+        connection = new signalR.HubConnectionBuilder().withUrl('/hubs/navigation', { accessTokenFactory: () => token }).withAutomaticReconnect().build();
+        connection.on('navigation', addLive); await connection.start();
+        $('status').textContent='Conectado em tempo real';
+      } catch { $('status').textContent='Conectado · atualização periódica ativa'; }
+    };
+  </script>
+</body>
+</html>

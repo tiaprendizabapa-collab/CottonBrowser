@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Nunca inclua uma pasta de publicação anterior em uma nova publicação. -->
+    <Content Remove="dist\**" />
+    <None Remove="dist\**" />
+  </ItemGroup>
+</Project>

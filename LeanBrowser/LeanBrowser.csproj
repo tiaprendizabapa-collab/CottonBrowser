@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>CottonBrowser</AssemblyName>
+    <RootNamespace>LeanBrowser</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\CottonBrowser.ico</ApplicationIcon>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    Ajustes de runtime voltados a RAM/CPU baixos.
+
+    ConcurrentGarbageCollection=false  -> usa o GC workstation NAO concorrente.
+      Elimina a thread de background do GC. Em um app que faz quase nenhuma
+      alocacao (a pagina web vive no processo do WebView2, nao aqui), o GC
+      concorrente so custa uma thread ociosa + heap extra.
+
+    ServerGarbageCollection=false     -> 1 heap em vez de 1 por nucleo.
+    TieredCompilation + QuickJit      -> startup rapido, menos CPU de JIT.
+    InvariantGlobalization            -> nao carrega ICU (~30 MB de dados).
+    EventSourceSupport=false          -> remove instrumentacao EventPipe.
+  -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <RetainVMGarbageCollection>false</RetainVMGarbageCollection>
+    <TieredCompilation>true</TieredCompilation>
+    <TieredCompilationQuickJit>true</TieredCompilationQuickJit>
+    <TieredPGO>true</TieredPGO>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
+    <DebuggerSupport>false</DebuggerSupport>
+    <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
+  </PropertyGroup>
+
+  <!-- Publicacao: single-file, framework-dependent (reaproveita o runtime .NET
+       ja instalado, em vez de duplicar ~70 MB por app). -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\blocklist.txt" />
+    <EmbeddedResource Include="Assets\uBOLite_2026.914.1325.edge.zip" />
+    <EmbeddedResource Include="Assets\Recovery\*.js" />
+    <EmbeddedResource Include="Assets\youtube-protection.js" />
+    <EmbeddedResource Include="Assets\AbapaLogo.png" />
+    <EmbeddedResource Include="Assets\foxy-jumpscare.mp4" />
+    <EmbeddedResource Include="Assets\foxy-jumpscare.mp3" />
+  </ItemGroup>
+
+  <!-- O pacote tambem inclui WPF, mas este aplicativo usa somente WinForms. -->
+  <Target Name="RemoveUnusedWpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>
