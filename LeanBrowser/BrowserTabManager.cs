@@ -9,8 +9,20 @@ public sealed class BrowserTab : TabPage
     public AdBlocker Blocker { get; } = new();
     public PopupPolicy Popups { get; } = new();
     public DocumentProtection DocumentProtection { get; } = new();
+    public NetworkProtection? NetworkProtection { get; set; }
+    public IDisposable? PermissionSubscription { get; set; }
     public bool Loading { get; set; }
     public BrowserTab() : base("Nova aba") => Controls.Add(Web);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            NetworkProtection?.Dispose();
+            PermissionSubscription?.Dispose();
+        }
+        base.Dispose(disposing);
+    }
 }
 
 public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Environment environment)
@@ -27,6 +39,7 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
         {
             await tab.Web.EnsureCoreWebView2Async(environment);
             if (tab.IsDisposed || view.IsDisposed) return null;
+            WebContentIsolation.ConfigureUntrustedTab(tab.Web);
             if (InitializeTabAsync is not null) await InitializeTabAsync(tab);
             if (tab.IsDisposed || view.IsDisposed) return null;
             tab.Web.CoreWebView2.Navigate(url);

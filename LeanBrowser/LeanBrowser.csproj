@@ -68,6 +68,10 @@
     <EmbeddedResource Include="Assets\foxy-jumpscare.mp3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Assets\Bridge\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- O pacote tambem inclui WPF, mas este aplicativo usa somente WinForms. -->
   <Target Name="RemoveUnusedWpfReference" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>

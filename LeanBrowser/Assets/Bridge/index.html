@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>Central do CottonBrowser</title>
+</head>
+<body>
+  <main>
+    <h1>Central do CottonBrowser</h1>
+    <form id="open-tab-form">
+      <label for="open-url">Abrir nova aba HTTPS</label>
+      <input id="open-url" name="url" type="url" inputmode="url" autocomplete="off" required placeholder="https://exemplo.com">
+      <button type="submit">Abrir</button>
+    </form>
+    <form id="bookmark-form">
+      <label for="bookmark-url">URL HTTPS</label>
+      <input id="bookmark-url" name="url" type="url" inputmode="url" autocomplete="off" required placeholder="https://exemplo.com">
+      <label for="bookmark-title">Titulo</label>
+      <input id="bookmark-title" name="title" type="text" maxlength="256" required>
+      <button type="submit">Salvar favorito</button>
+    </form>
+    <section aria-labelledby="permissions-title">
+      <h2 id="permissions-title">Permissões pendentes</h2>
+      <div id="permissions" aria-live="polite"></div>
+    </section>
+    <output id="status" aria-live="polite"></output>
+  </main>
+  <script src="bridge.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
