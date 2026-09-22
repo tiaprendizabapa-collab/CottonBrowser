@@ -48,6 +48,12 @@ public sealed class BrowserForm : Form
     private bool _protectionFailureShown;
     private readonly BookmarkStore _bookmarks = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "bookmarks.json"));
+    private readonly DownloadHistoryStore _downloadHistory = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "downloads.json"));
+    private readonly Dictionary<CoreWebView2DownloadOperation, DownloadEntry> _activeDownloads = new();
+    private readonly Dictionary<Guid, int> _lastPersistedDownloadPercent = new();
+    private DownloadsTab? _downloadsTab;
+    private int _downloadRefreshPending;
     private BrowserTabManager? _tabs;
     private CoreWebView2Environment? _browserEnvironment;
     private FoxyJumpscareForm? _foxyJumpscare;
@@ -204,6 +210,12 @@ public sealed class BrowserForm : Form
                 tab.Dispose();
                 _profileTab = null;
             }
+            else if (tab == _downloadsTab)
+            {
+                _tabView.TabPages.Remove(tab);
+                tab.Dispose();
+                _downloadsTab = null;
+            }
         };
         _overflowButton.Click += (_, _) => ShowOverflowMenu(_overflowButton);
         _overflowButton.Paint += (_, e) => PaintOverflowButton(e.Graphics);
@@ -215,6 +227,8 @@ public sealed class BrowserForm : Form
         configuration.Click += (_, _) => OpenSettings();
         var profile = new ToolStripMenuItem("Perfil");
         profile.Click += (_, _) => OpenProfile();
+        var downloads = new ToolStripMenuItem("Downloads");
+        downloads.Click += (_, _) => OpenDownloads();
         var protection = new ToolStripMenuItem("Proteção");
         var protectionEnabled = new ToolStripMenuItem("Bloquear anúncios (Ctrl+Shift+A)");
         protectionEnabled.Click += async (_, _) => await ToggleProtectionAsync();
@@ -244,7 +258,7 @@ public sealed class BrowserForm : Form
                 _adProtection.Available ? "uBlock Origin Lite ativo" : "Somente bloqueio básico ativo";
         };
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings, protectionStatus });
-        _overflowMenu.Items.AddRange(new ToolStripItem[] { browserCenter, configuration, profile, protection });
+        _overflowMenu.Items.AddRange(new ToolStripItem[] { browserCenter, configuration, profile, downloads, protection });
         _overflowMenu.Font = new Font(Theme.UiFont, 9.5f);
         _overflowMenu.BackColor = Theme.Surface;
         _overflowMenu.ForeColor = Theme.Ink;
@@ -347,6 +361,17 @@ public sealed class BrowserForm : Form
         _tabView.SelectedTab = _profileTab;
     }
 
+    private void OpenDownloads()
+    {
+        if (_downloadsTab is null || _downloadsTab.IsDisposed)
+        {
+            _downloadsTab = new DownloadsTab(_downloadHistory);
+            _tabView.TabPages.Add(_downloadsTab);
+        }
+        _downloadsTab.RefreshEntries();
+        _tabView.SelectedTab = _downloadsTab;
+    }
+
     private void ApplyTheme(bool dark)
     {
         Theme.SetDark(dark);
@@ -358,6 +383,7 @@ public sealed class BrowserForm : Form
         _tabView.ApplyTheme();
         _settingsTab?.ApplyTheme();
         _profileTab?.ApplyTheme();
+        _downloadsTab?.ApplyTheme();
         foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
         {
             try { if (tab.Web.CoreWebView2 is { } core) core.Profile.PreferredColorScheme = Theme.IsDark
@@ -624,6 +650,7 @@ public sealed class BrowserForm : Form
         var core = tab.Web.CoreWebView2;
         ApplySettings(core);
         PasswordManager.Configure(core);
+        core.DownloadStarting += OnDownloadStarting;
         tab.Blocker.Attach(core);
         core.NavigationStarting += (_, e) =>
         {
@@ -671,6 +698,144 @@ public sealed class BrowserForm : Form
             if (_tabView.BrowserTabCount == 0) Close();
         };
         RefreshActiveTab();
+    }
+
+    private void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs args)
+    {
+        try
+        {
+            var operation = args.DownloadOperation;
+            var resultPath = ChooseDownloadPath(args.ResultFilePath, operation.Uri);
+            args.ResultFilePath = resultPath;
+            args.Handled = true;
+
+            var entry = new DownloadEntry(
+                Guid.NewGuid(),
+                Path.GetFileName(resultPath),
+                operation.Uri,
+                resultPath,
+                Math.Max(0, operation.BytesReceived),
+                DownloadTotalBytes(operation.TotalBytesToReceive),
+                DownloadStatus.InProgress,
+                null,
+                DateTimeOffset.Now,
+                null);
+
+            _activeDownloads[operation] = entry;
+            _downloadHistory.Upsert(entry);
+            _lastPersistedDownloadPercent[entry.Id] = -1;
+            operation.BytesReceivedChanged += (_, _) => UpdateDownload(operation);
+            operation.StateChanged += (_, _) => UpdateDownload(operation);
+            BeginInvoke(new Action(OpenDownloads));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            args.Cancel = true;
+            if (!IsDisposed)
+                BeginInvoke(new Action(() => MessageBox.Show(this,
+                    "Não foi possível preparar o arquivo para download.\n" + ex.Message,
+                    "Downloads", MessageBoxButtons.OK, MessageBoxIcon.Warning)));
+        }
+    }
+
+    private void UpdateDownload(CoreWebView2DownloadOperation operation)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(() => UpdateDownload(operation))); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+
+        if (!_activeDownloads.TryGetValue(operation, out var current)) return;
+        var state = operation.State;
+        var status = state switch
+        {
+            CoreWebView2DownloadState.Completed => DownloadStatus.Completed,
+            CoreWebView2DownloadState.Interrupted => DownloadStatus.Interrupted,
+            _ => DownloadStatus.InProgress
+        };
+        var updated = current with
+        {
+            BytesReceived = Math.Max(0, operation.BytesReceived),
+            TotalBytes = DownloadTotalBytes(operation.TotalBytesToReceive),
+            Status = status,
+            Detail = status == DownloadStatus.Interrupted ? operation.InterruptReason.ToString() : null,
+            FinishedAt = status == DownloadStatus.InProgress ? null : DateTimeOffset.Now
+        };
+        _activeDownloads[operation] = updated;
+
+        var percent = GetDownloadPercent(updated);
+        var shouldPersist = status != DownloadStatus.InProgress
+            || !_lastPersistedDownloadPercent.TryGetValue(updated.Id, out var lastPercent)
+            || percent != lastPercent;
+        if (shouldPersist)
+        {
+            _lastPersistedDownloadPercent[updated.Id] = percent;
+            _downloadHistory.Upsert(updated);
+        }
+        ScheduleDownloadRefresh();
+    }
+
+    private void ScheduleDownloadRefresh()
+    {
+        if (_downloadsTab is null || _downloadsTab.IsDisposed || Interlocked.Exchange(ref _downloadRefreshPending, 1) != 0)
+            return;
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                Interlocked.Exchange(ref _downloadRefreshPending, 0);
+                _downloadsTab?.RefreshEntries();
+            }));
+        }
+        catch (InvalidOperationException) { Interlocked.Exchange(ref _downloadRefreshPending, 0); }
+    }
+
+    private static int GetDownloadPercent(DownloadEntry entry)
+    {
+        if (entry.Status == DownloadStatus.Completed) return 100;
+        if (entry.TotalBytes <= 0) return -1;
+        return (int)Math.Clamp(entry.BytesReceived * 100L / entry.TotalBytes, 0, 100);
+    }
+
+    private static long DownloadTotalBytes(ulong? total)
+    {
+        if (!total.HasValue || total.Value > long.MaxValue) return -1;
+        return (long)total.Value;
+    }
+
+    private static string ChooseDownloadPath(string suggestedPath, string sourceUrl)
+    {
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        Directory.CreateDirectory(directory);
+
+        var fileName = Path.GetFileName(suggestedPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            try { fileName = Path.GetFileName(Uri.UnescapeDataString(new Uri(sourceUrl).AbsolutePath)); }
+            catch (UriFormatException) { }
+        }
+        fileName = SanitizeDownloadFileName(fileName);
+        var candidate = Path.Combine(directory, fileName);
+        var suffix = 1;
+        while (File.Exists(candidate))
+        {
+            var stem = Path.GetFileNameWithoutExtension(fileName);
+            var extension = Path.GetExtension(fileName);
+            candidate = Path.Combine(directory, $"{stem} ({suffix++}){extension}");
+        }
+        return candidate;
+    }
+
+    private static string SanitizeDownloadFileName(string? fileName)
+    {
+        var value = string.IsNullOrWhiteSpace(fileName) ? "download" : fileName.Trim();
+        foreach (var invalid in Path.GetInvalidFileNameChars()) value = value.Replace(invalid, '_');
+        value = value.Trim('.', ' ');
+        return string.IsNullOrWhiteSpace(value) ? "download" : value;
     }
 
     private void ReplaceOpenInNewWindowCommand(CoreWebView2 core, CoreWebView2ContextMenuRequestedEventArgs e)
