@@ -71,7 +71,9 @@ public sealed class NavigationTelemetry : IDisposable
         try
         {
             var uri = new Uri(url!);
-            var safeUrl = uri.GetLeftPart(UriPartial.Path) + uri.Query;
+            var safeUrl = TelemetryUrlSanitizer.Sanitize(
+                uri,
+                TelemetryUrlSanitizer.DefaultSensitiveKeys);
             var search = SearchTermParser.TryExtract(uri);
             _queue.Writer.TryWrite(new NavigationTelemetryEvent(
                 eventType,

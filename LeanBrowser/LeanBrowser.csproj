@@ -70,7 +70,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Assets\Bridge\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- A Central usa estes arquivos por meio do mapeamento de host virtual do
+         WebView2. Eles precisam permanecer como arquivos reais ao lado do EXE;
+         um bundle single-file não disponibiliza esse diretório ao WebView2. -->
+    <None Update="Assets\Bridge\**\*"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="true" />
   </ItemGroup>
 
   <!-- O pacote tambem inclui WPF, mas este aplicativo usa somente WinForms. -->

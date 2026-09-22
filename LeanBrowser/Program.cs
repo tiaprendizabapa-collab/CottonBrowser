@@ -1,12 +1,33 @@
 using Microsoft.Web.WebView2.Core;
+using System.Threading;
 
 namespace LeanBrowser;
 
 internal static class Program
 {
+    private const string SingleInstanceMutexName = "Local\\CottonBrowser.SingleInstance.v1";
+
     [STAThread]
     private static void Main()
     {
+        // The WebView2 profile is intentionally exclusive. Detect a second
+        // launch before the runtime tries to attach to that profile, which
+        // otherwise surfaces as an unhelpful COM "Catastrophic failure".
+        using var instanceMutex = new Mutex(
+            initiallyOwned: true,
+            SingleInstanceMutexName,
+            out var ownsInstance);
+
+        if (!ownsInstance)
+        {
+            MessageBox.Show(
+                "O CottonBrowser ja esta aberto. Feche a instancia atual antes de iniciar outra.",
+                "CottonBrowser",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
         // Sem visual styles do GDI+ tematizado onde nao precisamos: a UI e
         // desenhada a mao. Mantemos ApplicationConfiguration para DPI correto.
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -27,7 +48,14 @@ internal static class Program
 
         System.Diagnostics.Debug.WriteLine($"WebView2 Runtime: {version}");
 
-        Application.Run(new BrowserForm());
+        try
+        {
+            Application.Run(new BrowserForm());
+        }
+        finally
+        {
+            instanceMutex.ReleaseMutex();
+        }
     }
 
     private static bool RuntimeAvailable(out string version)

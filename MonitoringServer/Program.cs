@@ -6,12 +6,29 @@ using System.Text.Encodings.Web;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+// Hosting diagnostics write the complete request URL at Information level,
+// before middleware gets control. Suppress those entries and use HttpLogging
+// below, which is configured without query strings or request headers.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+// Access logging is intentionally restricted to non-sensitive request metadata.
+// Do not add RequestQuery or RequestHeaders here: SignalR uses access_token in
+// the WebSocket query string and the REST endpoints accept Bearer headers.
+builder.Services.AddHttpLogging(options =>
+{
+    options.LoggingFields =
+        HttpLoggingFields.RequestMethod |
+        HttpLoggingFields.RequestPath |
+        HttpLoggingFields.RequestProtocol |
+        HttpLoggingFields.ResponseStatusCode |
+        HttpLoggingFields.Duration;
+});
 builder.Services.AddSignalR().AddJsonProtocol(options =>
     options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddSingleton<NavigationLogStore>();
@@ -24,6 +41,9 @@ builder.Services.AddAuthorization(options =>
 });
 
 var app = builder.Build();
+// Keep this before authentication. It records only the safe fields configured
+// above and does not mutate Request.Query, so SignalR authentication still works.
+app.UseHttpLogging();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseStaticFiles();
