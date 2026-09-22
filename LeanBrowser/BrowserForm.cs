@@ -40,6 +40,10 @@ public sealed class BrowserForm : Form
     private SettingsTab? _settingsTab;
     private ProfileTab? _profileTab;
     private readonly AdProtection _adProtection = new();
+    private readonly ISecretStore _secrets = new DpapiSecretStore();
+    private readonly WebRiskReputationService _urlReputation;
+    private readonly PermissionPolicy _permissionPolicy = new();
+    private bool _permissionCenterOpening;
     private bool _changingProtection;
     private bool _protectionFailureShown;
     private readonly BookmarkStore _bookmarks = new(Path.Combine(
@@ -64,6 +68,7 @@ public sealed class BrowserForm : Form
         SuspendLayout();
 
         _telemetry = new NavigationTelemetry(_access.UserName);
+        _urlReputation = new WebRiskReputationService(_secrets);
 
         try { Theme.SetDark(File.Exists(_themePath) && File.ReadAllText(_themePath).Trim() == "dark"); } catch { }
 
@@ -79,6 +84,7 @@ public sealed class BrowserForm : Form
 
         BuildToolbar();
         BuildMenus();
+        _permissionPolicy.PromptCreated += OnPermissionPromptCreated;
         _tabView.BrandClicked += OnBrandClicked;
 
         Controls.Add(_tabView);
@@ -203,6 +209,8 @@ public sealed class BrowserForm : Form
         _overflowButton.Paint += (_, e) => PaintOverflowButton(e.Graphics);
         _overflowButton.MouseEnter += (_, _) => _overflowButton.Invalidate();
         _overflowButton.MouseLeave += (_, _) => _overflowButton.Invalidate();
+        var browserCenter = new ToolStripMenuItem("Central do navegador");
+        browserCenter.Click += async (_, _) => await OpenTabAsync(TrustedBrowserBridge.UiUrl);
         var configuration = new ToolStripMenuItem("Configurações");
         configuration.Click += (_, _) => OpenSettings();
         var profile = new ToolStripMenuItem("Perfil");
@@ -236,7 +244,7 @@ public sealed class BrowserForm : Form
                 _adProtection.Available ? "uBlock Origin Lite ativo" : "Somente bloqueio básico ativo";
         };
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings, protectionStatus });
-        _overflowMenu.Items.AddRange(new ToolStripItem[] { configuration, profile, protection });
+        _overflowMenu.Items.AddRange(new ToolStripItem[] { browserCenter, configuration, profile, protection });
         _overflowMenu.Font = new Font(Theme.UiFont, 9.5f);
         _overflowMenu.BackColor = Theme.Surface;
         _overflowMenu.ForeColor = Theme.Ink;
@@ -414,6 +422,46 @@ public sealed class BrowserForm : Form
         catch (Exception ex) { if (!IsDisposed) MessageBox.Show(this, "Não foi possível abrir a aba.\n" + ex.Message); }
     }
 
+    private async Task<bool> OpenTabFromBridgeAsync(string url)
+    {
+        if (_tabs is null || IsDisposed) return false;
+        try { return await _tabs.CreateAsync(url) is not null; }
+        catch { return false; }
+    }
+
+    private void OnPermissionPromptCreated(PermissionPrompt prompt)
+    {
+        if (!IsHandleCreated || IsDisposed) return;
+        BeginInvoke(new Action(() => _ = ShowPermissionPromptAsync(prompt)));
+    }
+
+    private async Task ShowPermissionPromptAsync(PermissionPrompt prompt)
+    {
+        foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
+        {
+            if (TrustedBrowserBridge.PublishPermissionPrompt(tab.Web.CoreWebView2, prompt)) return;
+        }
+
+        if (_permissionCenterOpening) return;
+        _permissionCenterOpening = true;
+        try { await OpenTabAsync(TrustedBrowserBridge.UiUrl); }
+        finally { _permissionCenterOpening = false; }
+    }
+
+    private bool SaveBookmarkFromBridge(string url, string title)
+    {
+        try
+        {
+            _bookmarks.Add(url, title);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
+        {
+            MessageBox.Show(this, "Não foi possível salvar o favorito.", "Favoritos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+    }
+
     private void OnBrandClicked()
     {
         var now = Environment.TickCount64;
@@ -486,6 +534,8 @@ public sealed class BrowserForm : Form
     {
         _foxyJumpscare?.Close();
         _telemetry.Dispose();
+        _urlReputation.Dispose();
+        _permissionPolicy.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -497,11 +547,7 @@ public sealed class BrowserForm : Form
 
         Directory.CreateDirectory(userData);
 
-        var options = new CoreWebView2EnvironmentOptions(BrowserArguments())
-        {
-            AreBrowserExtensionsEnabled = true,
-            EnableTrackingPrevention = true,      // filtro de rastreadores do proprio motor
-        };
+        var options = WebContentIsolation.CreateEnvironmentOptions(BrowserArguments());
 
         var env = await CoreWebView2Environment.CreateAsync(
             browserExecutableFolder: null,        // usa o runtime Evergreen do sistema
@@ -513,6 +559,14 @@ public sealed class BrowserForm : Form
         _tabs = new BrowserTabManager(_tabView, env);
         _tabs.InitializeTabAsync = async tab =>
         {
+            tab.NetworkProtection = new NetworkProtection(tab.Web, _urlReputation);
+            tab.PermissionSubscription = _permissionPolicy.Attach(tab.Web);
+            await _permissionPolicy.ResetPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
+            TrustedBrowserBridge.Attach(tab.Web, new TrustedBrowserBridgeHandlers(
+                OpenTabFromBridgeAsync,
+                SaveBookmarkFromBridge,
+                _permissionPolicy.GetPending,
+                _permissionPolicy.Resolve));
             await _adProtection.InitializeAsync(tab.Web.CoreWebView2, userData);
             if (tab.IsDisposed || IsDisposed) return;
             await tab.DocumentProtection.SetEnabledAsync(tab.Web.CoreWebView2, _adProtection.Enabled);
@@ -631,10 +685,6 @@ public sealed class BrowserForm : Form
     /// </summary>
     private static string BrowserArguments() => string.Join(' ', new[]
     {
-        // --- Consolidacao de processos (o maior ganho de RAM) ---------------
-        "--process-per-site",              // mesma origem = 1 renderer, nao 1 por aba/frame
-        "--renderer-process-limit=4",      // teto rigido de renderers
-
         // --- Subsistemas de rede em background ------------------------------
         "--disable-background-networking", // updates, variacoes, dominios de captive portal
         "--disable-component-update",
