@@ -22,8 +22,8 @@ public sealed class ProfileTab : TabPage
         _title.Text = "Perfil";
         _subtitle.Text = "Veja a conta conectada e as permissões desta sessão.";
         _userValue.Text = access.UserName;
-        _roleValue.Text = access.RoleLabel;
-        _permissionValue.Text = access.IsAdmin
+        _roleValue.Text = access.ModeLabel;
+        _permissionValue.Text = access.IsAdvancedMode
             ? "Recursos avançados liberados para este perfil."
             : "Recursos avançados ficam ocultos para este perfil.";
 
@@ -49,7 +49,7 @@ public sealed class ProfileTab : TabPage
         _userCaption.ForeColor = Theme.InkMuted;
         _userValue.ForeColor = Theme.Ink;
         _roleCaption.ForeColor = Theme.InkMuted;
-        _roleValue.ForeColor = _access.IsAdmin ? Theme.Shield : Theme.Ink;
+        _roleValue.ForeColor = _access.IsAdvancedMode ? Theme.Shield : Theme.Ink;
         _permissionValue.ForeColor = Theme.InkMuted;
         _card.Invalidate();
     }

@@ -242,7 +242,7 @@ public sealed class BrowserForm : Form
         var settings = new ToolStripMenuItem("Configurar filtros de anúncios");
         settings.Click += async (_, _) =>
         {
-            if (!_access.IsAdmin) return;
+            if (!_access.IsAdvancedMode) return;
             if (_adProtection.DashboardUrl is { } url) await OpenTabAsync(url);
         };
         protection.DropDownOpening += (_, _) =>
@@ -250,10 +250,10 @@ public sealed class BrowserForm : Form
             protectionEnabled.Checked = _adProtection.Enabled;
             protectionEnabled.Enabled = !_changingProtection;
             allowPopups.Checked = _tabs?.Active?.Popups.AllowedForCurrentOrigin == true;
-            allowPopups.Visible = _access.IsAdmin;
-            allowPopups.Enabled = _access.IsAdmin && _adProtection.Enabled && BookmarkStore.IsWebUrl(_core?.Source ?? "");
-            settings.Visible = _access.IsAdmin;
-            settings.Enabled = _access.IsAdmin && _adProtection.Available;
+            allowPopups.Visible = _access.IsAdvancedMode;
+            allowPopups.Enabled = _access.IsAdvancedMode && _adProtection.Enabled && BookmarkStore.IsWebUrl(_core?.Source ?? "");
+            settings.Visible = _access.IsAdvancedMode;
+            settings.Enabled = _access.IsAdvancedMode && _adProtection.Available;
             protectionStatus.Text = !_adProtection.Enabled ? "Proteção pausada" :
                 _adProtection.Available ? "uBlock Origin Lite ativo" : "Somente bloqueio básico ativo";
         };
@@ -343,7 +343,7 @@ public sealed class BrowserForm : Form
             _settingsTab = new SettingsTab(ApplyTheme, ClearSavedPasswords, () =>
             {
                 try { return _bookmarks.Load(); } catch { return Array.Empty<Bookmark>(); }
-            }, AddBookmark, url => WithBookmarkErrors(() => _bookmarks.Remove(url)), _access.IsAdmin);
+            }, AddBookmark, url => WithBookmarkErrors(() => _bookmarks.Remove(url)), _access.IsAdvancedMode);
             _settingsTab.FavoriteSelected += async url => await OpenTabAsync(url);
             _tabView.TabPages.Add(_settingsTab);
         }
@@ -434,7 +434,7 @@ public sealed class BrowserForm : Form
 
     private async void ClearSavedPasswords()
     {
-        if (!_access.IsAdmin) return;
+        if (!_access.IsAdvancedMode) return;
         var core = _core;
         if (core is null || MessageBox.Show(this, "Apagar todas as senhas salvas neste navegador?", "Senhas", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         try { await PasswordManager.ClearSavedPasswordsAsync(core); MessageBox.Show(this, "Senhas salvas apagadas."); }
