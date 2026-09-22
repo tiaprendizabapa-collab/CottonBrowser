@@ -126,7 +126,8 @@ public sealed class WebRiskReputationService : IUrlReputationService, IDisposabl
 /// <summary>
 /// Intercepts every HTTP resource before it is sent and upgrades it to HTTPS.
 /// Document requests are then held with a WebView2 deferral until the URL is
-/// cleared by the reputation provider.  Unknown status blocks by default.
+/// checked by the reputation provider.  A known malicious URL is blocked;
+/// unavailable reputation data does not make the browser unusable.
 /// </summary>
 public sealed class NetworkProtection : IDisposable
 {
@@ -135,19 +136,21 @@ public sealed class NetworkProtection : IDisposable
         <body><h1>Site bloqueado</h1><p>O navegador bloqueou esta navegação por política de segurança.</p></body></html>
         """u8.ToArray();
 
-    private static readonly byte[] VerificationUnavailablePage = """
-        <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Verificação indisponível</title></head>
-        <body><h1>Navegação não verificada</h1><p>A reputação desta URL não pôde ser confirmada. A política corporativa bloqueou o carregamento.</p></body></html>
-        """u8.ToArray();
-
     private readonly CoreWebView2 _core;
     private readonly IUrlReputationService _reputation;
+    private readonly Func<Uri, Task<bool>> _confirmInsecureNavigation;
+    private readonly ConcurrentDictionary<string, byte> _approvedInsecureOrigins = new(StringComparer.OrdinalIgnoreCase);
+    private long _navigationEpoch;
     private int _disposed;
 
-    public NetworkProtection(WebView2 control, IUrlReputationService reputation)
+    public NetworkProtection(
+        WebView2 control,
+        IUrlReputationService reputation,
+        Func<Uri, Task<bool>> confirmInsecureNavigation)
     {
         ArgumentNullException.ThrowIfNull(control);
         _reputation = reputation ?? throw new ArgumentNullException(nameof(reputation));
+        _confirmInsecureNavigation = confirmInsecureNavigation ?? throw new ArgumentNullException(nameof(confirmInsecureNavigation));
         _core = control.CoreWebView2
             ?? throw new InvalidOperationException("CoreWebView2 must be initialized before attaching network protection.");
 
@@ -157,7 +160,50 @@ public sealed class NetworkProtection : IDisposable
         // Reputation is intentionally limited to documents: querying an online
         // service for every image or script would be both slow and excessive.
         _core.AddWebResourceRequestedFilter("https://*/*", CoreWebView2WebResourceContext.Document);
+        _core.NavigationStarting += OnNavigationStarting;
         _core.WebResourceRequested += OnWebResourceRequested;
+    }
+
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs args)
+    {
+        var epoch = Interlocked.Increment(ref _navigationEpoch);
+        if (Volatile.Read(ref _disposed) != 0
+            || !TryGetInsecureOrigin(args.Uri, out var target)
+            || IsInsecureOriginApproved(target))
+            return;
+
+        // The request has not reached the network yet. Cancel it, obtain an
+        // explicit decision, then navigate again only if it is still current.
+        args.Cancel = true;
+        _ = ResolveInsecureNavigationAsync(args.Uri, target, epoch);
+    }
+
+    private async Task ResolveInsecureNavigationAsync(string requestUri, Uri target, long epoch)
+    {
+        bool accepted;
+        try
+        {
+            accepted = await _confirmInsecureNavigation(target);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (Volatile.Read(ref _disposed) != 0 || epoch != Volatile.Read(ref _navigationEpoch))
+            return;
+
+        if (accepted)
+        {
+            _approvedInsecureOrigins.TryAdd(InsecureOriginKey(target), 0);
+            _core.Navigate(requestUri);
+            return;
+        }
+
+        // Declining preserves the secure-by-default behavior: attempt HTTPS
+        // rather than sending the original clear-text request.
+        if (TryUpgradeToHttps(target, out var upgraded))
+            _core.Navigate(upgraded.AbsoluteUri);
     }
 
     private async void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
@@ -176,6 +222,9 @@ public sealed class NetworkProtection : IDisposable
 
             if (target.Scheme == Uri.UriSchemeHttp)
             {
+                if (IsInsecureOriginApproved(target))
+                    return;
+
                 if (!TryUpgradeToHttps(target, out target))
                 {
                     Block(args, BlockedPage, 403, "HTTPS required");
@@ -190,7 +239,7 @@ public sealed class NetworkProtection : IDisposable
         }
         catch
         {
-            Block(args, VerificationUnavailablePage, 503, "Security check failed");
+            Block(args, BlockedPage, 400, "Security check failed");
             return;
         }
 
@@ -201,12 +250,12 @@ public sealed class NetworkProtection : IDisposable
             var verdict = await _reputation.CheckAsync(target, timeout.Token);
             if (verdict == UrlReputationVerdict.Malicious)
                 Block(args, BlockedPage, 451, "Blocked by URL reputation");
-            else if (verdict != UrlReputationVerdict.Allowed)
-                Block(args, VerificationUnavailablePage, 503, "URL reputation unavailable");
         }
         catch
         {
-            Block(args, VerificationUnavailablePage, 503, "URL reputation unavailable");
+            // The Web Risk service is optional.  Keep HTTPS enforcement and
+            // browser-level protections active, but do not block navigation
+            // merely because its API key, network, or service is unavailable.
         }
         finally
         {
@@ -239,6 +288,24 @@ public sealed class NetworkProtection : IDisposable
         return true;
     }
 
+    private bool IsInsecureOriginApproved(Uri target) =>
+        _approvedInsecureOrigins.ContainsKey(InsecureOriginKey(target));
+
+    private static bool TryGetInsecureOrigin(string value, out Uri target)
+    {
+        target = null!;
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var parsed)
+            || !string.Equals(parsed.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrEmpty(parsed.Host)
+            || !string.IsNullOrEmpty(parsed.UserInfo))
+            return false;
+
+        target = parsed;
+        return true;
+    }
+
+    private static string InsecureOriginKey(Uri uri) => uri.GetLeftPart(UriPartial.Authority);
+
     private static bool IsTrustedInternalUri(Uri uri) =>
         string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
         && string.Equals(uri.Host, TrustedBrowserBridge.HostName, StringComparison.OrdinalIgnoreCase)
@@ -247,6 +314,10 @@ public sealed class NetworkProtection : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _core.NavigationStarting -= OnNavigationStarting;
             _core.WebResourceRequested -= OnWebResourceRequested;
+            _approvedInsecureOrigins.Clear();
+        }
     }
 }

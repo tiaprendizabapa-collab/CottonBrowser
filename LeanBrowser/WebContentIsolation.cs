@@ -51,10 +51,11 @@ public static class WebContentIsolation
             // Do not enable SSO based on the Windows account for arbitrary sites.
             AllowSingleSignOnUsingOSPrimaryAccount = false,
 
-            // An extension is executable web content with privileged browser APIs.
-            // Internet tabs run without extensions unless a future, separately
-            // audited policy creates a distinct environment for trusted code.
-            AreBrowserExtensionsEnabled = false,
+            // The only extension installed by this application is the bundled,
+            // hash-verified uBlock Origin Lite package (AdProtection).  WebView2
+            // must enable extensions when the environment is created; otherwise
+            // AddBrowserExtensionAsync fails with a COMException.
+            AreBrowserExtensionsEnabled = true,
             EnableTrackingPrevention = true,
 
             // Do not permit a second host process to attach to this profile and

@@ -25,7 +25,8 @@
 
     ServerGarbageCollection=false     -> 1 heap em vez de 1 por nucleo.
     TieredCompilation + QuickJit      -> startup rapido, menos CPU de JIT.
-    InvariantGlobalization            -> nao carrega ICU (~30 MB de dados).
+    InvariantGlobalization=false      -> WinForms e componentes WebView2 podem
+                                         usar a cultura configurada no Windows.
     EventSourceSupport=false          -> remove instrumentacao EventPipe.
   -->
   <PropertyGroup>
@@ -35,7 +36,7 @@
     <TieredCompilation>true</TieredCompilation>
     <TieredCompilationQuickJit>true</TieredCompilationQuickJit>
     <TieredPGO>true</TieredPGO>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization>false</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <EventSourceSupport>false</EventSourceSupport>
     <MetadataUpdaterSupport>false</MetadataUpdaterSupport>

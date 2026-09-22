@@ -49,7 +49,7 @@ if errorlevel 1 (
 echo.
 echo [3/3] Pronto.
 echo.
-echo Executavel: %CD%\dist\LeanBrowser.exe
+echo Executavel: %CD%\dist\CottonBrowser.exe
 echo.
 dir /b .\dist\*.exe
 set "RESULT=0"
