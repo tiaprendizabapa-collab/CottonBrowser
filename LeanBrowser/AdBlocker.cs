@@ -147,12 +147,14 @@ public sealed class AdBlocker
     }
 
     /// <summary>
-    /// So e chamado para requisicoes que ja casaram com um padrao de anuncio.
-    /// Por isso o corpo e minusculo: nao ha decisao a tomar, so responder.
+    /// WebResourceRequested e um evento compartilhado: filtros registrados
+    /// por outras protecoes tambem o disparam. Confirme o host aqui antes de
+    /// responder, para que um filtro amplo (por exemplo, para documentos HTTPS)
+    /// nunca transforme uma navegacao legitima em 403.
     /// </summary>
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
-        if (!Enabled || _core is null)
+        if (!Enabled || _core is null || !MatchesBlockedDomain(e.Request.Uri))
             return; // Deixa seguir para a rede.
 
         // Resposta sintetica vazia. 403 + CORS liberado evita que scripts de
@@ -170,6 +172,23 @@ public sealed class AdBlocker
         // Nota deliberada: NAO atualizamos a UI aqui. Tocar em controles a cada
         // bloqueio causaria dezenas de invalidacoes/repaints por pagina. O
         // contador e lido uma vez, em NavigationCompleted.
+    }
+
+    private bool MatchesBlockedDomain(string requestUri)
+    {
+        if (!Uri.TryCreate(requestUri, UriKind.Absolute, out var uri)
+            || string.IsNullOrEmpty(uri.Host))
+            return false;
+
+        var host = uri.Host;
+        foreach (var domain in _domains)
+        {
+            if (string.Equals(host, domain, StringComparison.OrdinalIgnoreCase)
+                || host.EndsWith('.' + domain, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     public void ResetPageCounter() => BlockedOnCurrentPage = 0;

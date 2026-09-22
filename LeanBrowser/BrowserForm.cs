@@ -559,7 +559,10 @@ public sealed class BrowserForm : Form
         _tabs = new BrowserTabManager(_tabView, env);
         _tabs.InitializeTabAsync = async tab =>
         {
-            tab.NetworkProtection = new NetworkProtection(tab.Web, _urlReputation);
+            tab.NetworkProtection = new NetworkProtection(
+                tab.Web,
+                _urlReputation,
+                ConfirmInsecureNavigationAsync);
             tab.PermissionSubscription = _permissionPolicy.Attach(tab.Web);
             await _permissionPolicy.ResetPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
             TrustedBrowserBridge.Attach(tab.Web, new TrustedBrowserBridgeHandlers(
@@ -582,6 +585,39 @@ public sealed class BrowserForm : Form
         await _tabs.CreateAsync(HomePage);
         _omnibox.Input.Focus();
     }
+
+    private Task<bool> ConfirmInsecureNavigationAsync(Uri target)
+    {
+        if (IsDisposed || Disposing) return Task.FromResult(false);
+
+        if (InvokeRequired)
+        {
+            var decision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    try { decision.TrySetResult(ShowInsecureNavigationWarning(target)); }
+                    catch { decision.TrySetResult(false); }
+                }));
+            }
+            catch { decision.TrySetResult(false); }
+            return decision.Task;
+        }
+
+        return Task.FromResult(ShowInsecureNavigationWarning(target));
+    }
+
+    private bool ShowInsecureNavigationWarning(Uri target) =>
+        MessageBox.Show(
+            this,
+            $"{target.GetLeftPart(UriPartial.Authority)} usa HTTP sem criptografia. " +
+            "Dados e credenciais podem ser interceptados ou alterados.\n\n" +
+            "Deseja aceitar o risco e continuar somente nesta sessao?",
+            "Conexao nao segura",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2) == DialogResult.Yes;
 
     private void ConfigureTab(BrowserTab tab)
     {
