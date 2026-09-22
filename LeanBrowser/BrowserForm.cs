@@ -14,7 +14,19 @@ public sealed class BrowserForm : Form
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
     private readonly Omnibox    _omnibox  = new();
     private readonly BrowserTabControl _tabView = new() { Dock = DockStyle.Fill };
-    private readonly MenuStrip _menu = new();
+    private readonly Button _overflowButton = new()
+    {
+        Text = "",
+        AccessibleName = "Mais opções",
+        AccessibleRole = AccessibleRole.PushButton,
+        Size = new Size(36, 36),
+        FlatStyle = FlatStyle.Flat,
+        BackColor = Theme.Chrome,
+        ForeColor = Theme.Ink,
+        Cursor = Cursors.Hand,
+        TabStop = false,
+        UseVisualStyleBackColor = false
+    };
     private readonly ContextMenuStrip _overflowMenu = new()
     {
         ShowImageMargin = false,
@@ -72,12 +84,15 @@ public sealed class BrowserForm : Form
         Controls.Add(_tabView);
         Controls.Add(_toolbar);
         Controls.Add(_tabView.HeaderStrip);
-        Controls.Add(_menu);
+        Controls.Add(_overflowButton);
+        Resize += (_, _) => LayoutOverflowButton();
+        _tabView.HeaderStrip.Resize += (_, _) => LayoutOverflowButton();
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
         ApplyThemeRecursive(this);
         _tabView.ApplyTheme();
+        LayoutOverflowButton();
 
         ResumeLayout(false);
     }
@@ -163,14 +178,7 @@ public sealed class BrowserForm : Form
 
     private void BuildMenus()
     {
-        MainMenuStrip = _menu;
-        _menu.Dock = DockStyle.Top;
-        _menu.Height = 32;
-        _menu.GripStyle = ToolStripGripStyle.Hidden;
-        _menu.Padding = new Padding(8, 0, 8, 0);
-        _menu.Font = new Font(Theme.UiFont, 9f);
         _tabView.NewTabRequested += async () => await OpenTabAsync(HomePage);
-        _menu.ShowItemToolTips = true;
         _tabView.CloseRequested += tab =>
         {
             _tabs?.Close(tab);
@@ -191,11 +199,10 @@ public sealed class BrowserForm : Form
                 _profileTab = null;
             }
         };
-        var overflow = new OverflowMenuItem();
-        overflow.Click += (_, _) =>
-        {
-            ShowOverflowMenu(overflow);
-        };
+        _overflowButton.Click += (_, _) => ShowOverflowMenu(_overflowButton);
+        _overflowButton.Paint += (_, e) => PaintOverflowButton(e.Graphics);
+        _overflowButton.MouseEnter += (_, _) => _overflowButton.Invalidate();
+        _overflowButton.MouseLeave += (_, _) => _overflowButton.Invalidate();
         var configuration = new ToolStripMenuItem("Configurações");
         configuration.Click += (_, _) => OpenSettings();
         var profile = new ToolStripMenuItem("Perfil");
@@ -234,21 +241,53 @@ public sealed class BrowserForm : Form
         _overflowMenu.BackColor = Theme.Surface;
         _overflowMenu.ForeColor = Theme.Ink;
         _overflowMenu.Renderer = new OverflowMenuRenderer();
-        _menu.Items.Add(overflow);
         _tabView.SelectedIndexChanged += (_, _) => RefreshActiveTab();
     }
 
-    private void ShowOverflowMenu(ToolStripItem anchor)
+    private void LayoutOverflowButton()
+    {
+        if (IsDisposed) return;
+        var header = _tabView.HeaderStrip;
+        var top = header.Top + Math.Max(0, (header.Height - _overflowButton.Height) / 2);
+        var left = Math.Max(4, ClientSize.Width - _overflowButton.Width - 6);
+        _overflowButton.Location = new Point(left, top);
+        _overflowButton.BringToFront();
+    }
+
+    private void PaintOverflowButton(Graphics g)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Theme.Chrome);
+        var point = _overflowButton.PointToClient(Cursor.Position);
+        if (_overflowButton.ClientRectangle.Contains(point))
+        {
+            using var hotBrush = new SolidBrush(Theme.SurfaceHot);
+            g.FillRectangle(hotBrush, new Rectangle(0, 0, _overflowButton.Width - 1, _overflowButton.Height - 1));
+        }
+
+        using var dotBrush = new SolidBrush(Theme.InkMuted);
+        var centerX = _overflowButton.Width / 2f;
+        var centerY = _overflowButton.Height / 2f;
+        const float radius = 2f;
+        const float spacing = 6f;
+        for (var i = -1; i <= 1; i++)
+        {
+            var y = centerY + i * spacing;
+            g.FillEllipse(dotBrush, centerX - radius, y - radius, radius * 2, radius * 2);
+        }
+    }
+
+    private void ShowOverflowMenu(Control anchor)
     {
         _overflowMenu.PerformLayout();
         var popupSize = _overflowMenu.GetPreferredSize(Size.Empty);
-        var anchorPoint = _menu.PointToScreen(new Point(anchor.Bounds.Left, anchor.Bounds.Bottom + 1));
+        var anchorPoint = anchor.PointToScreen(new Point(anchor.Width, anchor.Height + 1));
         var clientOrigin = PointToScreen(Point.Empty);
         var clientBounds = new Rectangle(clientOrigin, ClientSize);
 
         // Mantém o painel dentro da janela; perto da borda direita ele abre
         // para a esquerda, como nos menus compactos dos navegadores atuais.
-        var x = Math.Min(anchorPoint.X, clientBounds.Right - popupSize.Width - 8);
+        var x = Math.Min(anchorPoint.X - popupSize.Width, clientBounds.Right - popupSize.Width - 8);
         x = Math.Max(clientBounds.Left + 8, x);
 
         var y = anchorPoint.Y;
@@ -304,7 +343,8 @@ public sealed class BrowserForm : Form
     {
         Theme.SetDark(dark);
         try { Directory.CreateDirectory(Path.GetDirectoryName(_themePath)!); File.WriteAllText(_themePath, dark ? "dark" : "light"); } catch { }
-        BackColor = Theme.Chrome; _toolbar.BackColor = Theme.Chrome; _menu.BackColor = Theme.Chrome; _menu.ForeColor = Theme.Ink;
+        BackColor = Theme.Chrome; _toolbar.BackColor = Theme.Chrome;
+        _overflowButton.BackColor = Theme.Chrome; _overflowButton.ForeColor = Theme.Ink;
         _overflowMenu.BackColor = Theme.Surface; _overflowMenu.ForeColor = Theme.Ink;
         ApplyThemeRecursive(this);
         _tabView.ApplyTheme();
@@ -355,47 +395,6 @@ public sealed class BrowserForm : Form
         {
             e.TextColor = Theme.Ink;
             base.OnRenderItemText(e);
-        }
-    }
-
-    private sealed class OverflowMenuItem : ToolStripMenuItem
-    {
-        public OverflowMenuItem()
-        {
-            ToolTipText = "Mais opções";
-            AccessibleName = "Mais opções";
-            Alignment = ToolStripItemAlignment.Right;
-            AutoSize = false;
-            Width = 38;
-            Height = 30;
-            Margin = Padding.Empty;
-            Padding = Padding.Empty;
-            BackColor = Theme.Chrome;
-            ForeColor = Theme.Ink;
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Theme.Chrome);
-
-            if (Selected)
-            {
-                using var hotBrush = new SolidBrush(Theme.SurfaceHot);
-                g.FillRectangle(hotBrush, new Rectangle(0, 0, Width - 1, Height - 1));
-            }
-
-            using var dotBrush = new SolidBrush(Theme.InkMuted);
-            var centerX = Width / 2f;
-            var centerY = Height / 2f;
-            const float radius = 2f;
-            const float spacing = 6f;
-            for (var i = -1; i <= 1; i++)
-            {
-                var y = centerY + i * spacing;
-                g.FillEllipse(dotBrush, centerX - radius, y - radius, radius * 2, radius * 2);
-            }
         }
     }
 

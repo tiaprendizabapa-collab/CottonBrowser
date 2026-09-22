@@ -24,7 +24,7 @@ public sealed class BrowserTabControl : TabControl
     {
         Dock = DockStyle.Top, Height = 50, WrapContents = false,
         FlowDirection = FlowDirection.LeftToRight, AutoScroll = true,
-        BackColor = Theme.Chrome, Padding = new Padding(8, 3, 10, 3)
+        BackColor = Theme.Chrome, Padding = new Padding(8, 3, 50, 3)
     };
     public int BrowserTabCount => TabPages.OfType<BrowserTab>().Count();
     public event Action<BrowserTab>? CloseRequested;
