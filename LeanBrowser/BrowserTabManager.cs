@@ -5,7 +5,7 @@ namespace LeanBrowser;
 
 public sealed class BrowserTab : TabPage
 {
-    public WebView2 Web { get; } = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
+    public WebView2 Web { get; } = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Theme.Chrome };
     public AdBlocker Blocker { get; } = new();
     public PopupPolicy Popups { get; } = new();
     public DocumentProtection DocumentProtection { get; } = new();

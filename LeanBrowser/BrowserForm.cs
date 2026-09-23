@@ -6,7 +6,7 @@ namespace LeanBrowser;
 
 public sealed class BrowserForm : Form
 {
-    private const string HomePage = "https://www.google.com";
+    private const string HomePage = TrustedBrowserBridge.NewTabUrl;
 
     private readonly Panel      _toolbar  = new();
     private readonly ToolButton _back     = new("\uE72B", "Voltar");
@@ -14,6 +14,7 @@ public sealed class BrowserForm : Form
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
     private readonly Omnibox    _omnibox  = new();
     private readonly BrowserTabControl _tabView = new() { Dock = DockStyle.Fill };
+    private readonly Panel _tabBar = new() { Dock = DockStyle.Top, Height = 50, BackColor = Theme.Chrome };
     private readonly Button _overflowButton = new()
     {
         Text = "",
@@ -35,6 +36,7 @@ public sealed class BrowserForm : Form
         Padding = new Padding(4)
     };
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
+    private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
     private readonly AccessControl _access = new();
     private readonly NavigationTelemetry _telemetry;
     private SettingsTab? _settingsTab;
@@ -68,6 +70,12 @@ public sealed class BrowserForm : Form
     private bool _loading;
     private bool _omniboxDirty;   // usuario esta editando: nao sobrescrever
     private bool _selectAllOnClick;
+    private bool _browserFullscreen;
+    private bool _windowFullscreen;
+    private FormBorderStyle _restoreBorderStyle;
+    private FormWindowState _restoreWindowState;
+    private Rectangle _restoreBounds;
+    private bool _restoreTopMost;
 
     public BrowserForm()
     {
@@ -77,6 +85,7 @@ public sealed class BrowserForm : Form
         _urlReputation = new WebRiskReputationService(_secrets);
 
         try { Theme.SetDark(File.Exists(_themePath) && File.ReadAllText(_themePath).Trim() == "dark"); } catch { }
+        try { if (File.Exists(_accentPath)) Theme.SetAccent(ColorTranslator.FromHtml(File.ReadAllText(_accentPath).Trim())); } catch { }
 
         Text = "CottonBrowser";
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -87,26 +96,28 @@ public sealed class BrowserForm : Form
         Font = new Font(Theme.UiFont, 9f);
         DoubleBuffered = true;
         KeyPreview = true;
+        Activated += (_, _) => { if (_windowFullscreen) TopMost = true; };
+        Deactivate += (_, _) => { if (_windowFullscreen) TopMost = false; };
 
         BuildToolbar();
         BuildMenus();
         _permissionPolicy.PromptCreated += OnPermissionPromptCreated;
         _tabView.BrandClicked += OnBrandClicked;
 
+        _tabBar.Controls.Add(_tabView.HeaderStrip);
+        _tabBar.Controls.Add(_overflowButton);
+        _tabBar.Resize += (_, _) => LayoutTabBar();
         Controls.Add(_tabView);
         Controls.Add(_toolbar);
-        Controls.Add(_tabView.HeaderStrip);
-        Controls.Add(_overflowButton);
-        Resize += (_, _) => LayoutOverflowButton();
-        _tabView.HeaderStrip.Resize += (_, _) => LayoutOverflowButton();
+        Controls.Add(_tabBar);
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
         ApplyThemeRecursive(this);
         _tabView.ApplyTheme();
-        LayoutOverflowButton();
 
         ResumeLayout(false);
+        LayoutTabBar();
     }
 
     // ---------------------------------------------------------------- UI ---
@@ -114,16 +125,19 @@ public sealed class BrowserForm : Form
     private void BuildToolbar()
     {
         _toolbar.Dock = DockStyle.Top;
-        _toolbar.Height = 58;
+        _toolbar.Height = 54;
         _toolbar.BackColor = Theme.Chrome;
         _toolbar.Padding = new Padding(4, 0, 4, 0);
 
-        // Linha divisoria de 1px desenhada a mao (mais barato que um Control).
+        // Gradiente de 3px no rodapé da barra, em direção ao conteúdo WebView2.
         _toolbar.Paint += (_, e) =>
         {
-            using var pen = new Pen(Theme.Divider);
-            e.Graphics.DrawLine(pen, 0, _toolbar.Height - 1,
-                                     _toolbar.Width, _toolbar.Height - 1);
+            if (_toolbar.Width <= 0 || _toolbar.Height < 3) return;
+            var edge = new Rectangle(0, _toolbar.Height - 3, _toolbar.Width, 3);
+            using var brush = new LinearGradientBrush(edge,
+                Color.FromArgb(0, Color.Black), Color.FromArgb(Theme.IsDark ? 48 : 28, Color.Black),
+                LinearGradientMode.Vertical);
+            e.Graphics.FillRectangle(brush, edge);
         };
 
         _back.Click    += (_, _) => _core?.GoBack();
@@ -186,6 +200,16 @@ public sealed class BrowserForm : Form
 
         _omnibox.Location = new Point(x, (_toolbar.Height - 1 - _omnibox.Height) / 2);
         _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin);
+    }
+
+    private void LayoutTabBar()
+    {
+        const int menuSpace = 44;
+        _tabView.HeaderStrip.SetBounds(0, 0,
+            Math.Max(0, _tabBar.ClientSize.Width - menuSpace), _tabBar.ClientSize.Height);
+        _overflowButton.Location = new Point(
+            Math.Max(0, _tabBar.ClientSize.Width - _overflowButton.Width - 4),
+            Math.Max(0, (_tabBar.ClientSize.Height - _overflowButton.Height) / 2));
     }
 
     private void BuildMenus()
@@ -266,16 +290,6 @@ public sealed class BrowserForm : Form
         _tabView.SelectedIndexChanged += (_, _) => RefreshActiveTab();
     }
 
-    private void LayoutOverflowButton()
-    {
-        if (IsDisposed) return;
-        var header = _tabView.HeaderStrip;
-        var top = header.Top + Math.Max(0, (header.Height - _overflowButton.Height) / 2);
-        var left = Math.Max(4, ClientSize.Width - _overflowButton.Width - 6);
-        _overflowButton.Location = new Point(left, top);
-        _overflowButton.BringToFront();
-    }
-
     private void PaintOverflowButton(Graphics g)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -284,7 +298,8 @@ public sealed class BrowserForm : Form
         if (_overflowButton.ClientRectangle.Contains(point))
         {
             using var hotBrush = new SolidBrush(Theme.SurfaceHot);
-            g.FillRectangle(hotBrush, new Rectangle(0, 0, _overflowButton.Width - 1, _overflowButton.Height - 1));
+            using var hotPath = Draw.RoundedRect(new Rectangle(1, 1, _overflowButton.Width - 3, _overflowButton.Height - 3), 9);
+            g.FillPath(hotBrush, hotPath);
         }
 
         using var dotBrush = new SolidBrush(Theme.InkMuted);
@@ -343,7 +358,7 @@ public sealed class BrowserForm : Form
             _settingsTab = new SettingsTab(ApplyTheme, ClearSavedPasswords, () =>
             {
                 try { return _bookmarks.Load(); } catch { return Array.Empty<Bookmark>(); }
-            }, AddBookmark, url => WithBookmarkErrors(() => _bookmarks.Remove(url)), _access.IsAdvancedMode);
+            }, AddBookmark, url => WithBookmarkErrors(() => _bookmarks.Remove(url)), _access.IsAdvancedMode, ApplyAccent);
             _settingsTab.FavoriteSelected += async url => await OpenTabAsync(url);
             _tabView.TabPages.Add(_settingsTab);
         }
@@ -376,7 +391,7 @@ public sealed class BrowserForm : Form
     {
         Theme.SetDark(dark);
         try { Directory.CreateDirectory(Path.GetDirectoryName(_themePath)!); File.WriteAllText(_themePath, dark ? "dark" : "light"); } catch { }
-        BackColor = Theme.Chrome; _toolbar.BackColor = Theme.Chrome;
+        BackColor = Theme.Chrome; _toolbar.BackColor = Theme.Chrome; _tabBar.BackColor = Theme.Chrome;
         _overflowButton.BackColor = Theme.Chrome; _overflowButton.ForeColor = Theme.Ink;
         _overflowMenu.BackColor = Theme.Surface; _overflowMenu.ForeColor = Theme.Ink;
         ApplyThemeRecursive(this);
@@ -390,7 +405,22 @@ public sealed class BrowserForm : Form
                 ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light; }
             catch { }
         }
+        if (IsHandleCreated) Native.SetDarkCaption(Handle, dark);
         _tabView.Invalidate(true); Invalidate(true);
+    }
+
+    private void ApplyAccent(Color color)
+    {
+        Theme.SetAccent(color);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_accentPath)!);
+            File.WriteAllText(_accentPath, ColorTranslator.ToHtml(Theme.CustomAccent!.Value));
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        ApplyTheme(Theme.IsDark);
+        RefreshActiveTab(resetEditing: false);
     }
 
     private static void ApplyThemeRecursive(Control control)
@@ -525,6 +555,62 @@ public sealed class BrowserForm : Form
         _telemetry.RecordActiveTab(url, _core?.DocumentTitle);
         _omnibox.SetIndicator(_core?.Source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) == true,
             _blocker?.BlockedOnCurrentPage ?? 0);
+        SynchronizeFullscreen();
+    }
+
+    private bool ActivePageIsFullscreen()
+    {
+        try { return _core?.ContainsFullScreenElement == true; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        { return false; }
+    }
+
+    private void SynchronizeFullscreen()
+    {
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        var shouldFillScreen = _browserFullscreen || ActivePageIsFullscreen();
+        if (shouldFillScreen == _windowFullscreen) return;
+
+        if (shouldFillScreen)
+        {
+            _restoreBorderStyle = FormBorderStyle;
+            _restoreWindowState = WindowState;
+            _restoreBounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            _restoreTopMost = TopMost;
+            var screenBounds = Screen.FromControl(this).Bounds;
+
+            SuspendLayout();
+            try
+            {
+                _tabBar.Visible = false;
+                _toolbar.Visible = false;
+                WindowState = FormWindowState.Normal;
+                FormBorderStyle = FormBorderStyle.None;
+                Bounds = screenBounds;
+                TopMost = true;
+            }
+            finally { ResumeLayout(true); }
+            _windowFullscreen = true;
+            _web?.Focus();
+            return;
+        }
+
+        SuspendLayout();
+        try
+        {
+            TopMost = _restoreTopMost;
+            WindowState = FormWindowState.Normal;
+            FormBorderStyle = _restoreBorderStyle;
+            if (!_restoreBounds.IsEmpty) Bounds = _restoreBounds;
+            WindowState = _restoreWindowState;
+            _tabBar.Visible = true;
+            _toolbar.Visible = true;
+        }
+        finally { ResumeLayout(true); }
+        _windowFullscreen = false;
+        Native.EnableRoundedCorners(Handle);
+        Native.EnableMica(Handle);
+        Native.SetDarkCaption(Handle, Theme.IsDark);
     }
 
     private bool IsFavorite(string url)
@@ -540,6 +626,8 @@ public sealed class BrowserForm : Form
         base.OnLoad(e);
 
         Native.EnableRoundedCorners(Handle);
+        Native.EnableMica(Handle);
+        Native.SetDarkCaption(Handle, Theme.IsDark);
         AdBlocker.ExportDefaultList();
 
         try
@@ -648,16 +736,40 @@ public sealed class BrowserForm : Form
     private void ConfigureTab(BrowserTab tab)
     {
         var core = tab.Web.CoreWebView2;
+        var faviconRequest = 0;
         ApplySettings(core);
         PasswordManager.Configure(core);
         core.DownloadStarting += OnDownloadStarting;
         tab.Blocker.Attach(core);
         core.NavigationStarting += (_, e) =>
         {
+            faviconRequest++;
+            // Mantém o ícone atual até o WebView2 confirmar uma mudança.
+            // Páginas do mesmo site podem reutilizar a favicon sem disparar FaviconChanged.
             tab.Popups.OnNavigation(e.Uri);
             if (!e.IsRedirected) tab.Blocker.ResetPageCounter();
             tab.Loading = true;
             if (_tabs?.Active == tab) SetLoading(true);
+        };
+        core.FaviconChanged += async (_, _) =>
+        {
+            var request = ++faviconRequest;
+            try
+            {
+                using var stream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png);
+                using var decoded = Image.FromStream(stream);
+                var favicon = new Bitmap(decoded); // independente do stream descartado
+                if (tab.IsDisposed || _tabView.IsDisposed || request != faviconRequest)
+                    favicon.Dispose();
+                else
+                    _tabView.SetFavicon(tab, favicon); // transfere a propriedade da imagem
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or InvalidOperationException
+                or OperationCanceledException or OutOfMemoryException or System.Runtime.InteropServices.COMException)
+            {
+                if (!tab.IsDisposed && !_tabView.IsDisposed && request == faviconRequest)
+                    _tabView.SetFavicon(tab, null);
+            }
         };
         core.NavigationCompleted += (_, e) =>
         {
@@ -677,6 +789,15 @@ public sealed class BrowserForm : Form
             var title = core.DocumentTitle;
             tab.Text = string.IsNullOrWhiteSpace(title) ? "Nova aba" : title[..Math.Min(32, title.Length)];
             if (_tabs?.Active == tab) Text = BuildTitle(title);
+        };
+        core.ContainsFullScreenElementChanged += (_, _) =>
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            BeginInvoke(new Action(() =>
+            {
+                if (!IsDisposed && !tab.IsDisposed && _tabs?.Active == tab)
+                    SynchronizeFullscreen();
+            }));
         };
         tab.Web.KeyDown += OnWebKeyDown;
         core.ContextMenuRequested += (_, e) => ReplaceOpenInNewWindowCommand(core, e);
@@ -982,6 +1103,7 @@ public sealed class BrowserForm : Form
             return;
 
         _loading = loading;
+        _omnibox.SetNavigationProgress(loading);
         _reload.Glyph = loading ? "\uE711" : "\uE72C"; // X : recarregar
         _reload.AccessibleName = loading ? "Parar" : "Recarregar";
         _reload.Invalidate();
@@ -1002,7 +1124,9 @@ public sealed class BrowserForm : Form
     {
         if (_omniboxDirty) return; // usuario digitando: nao atropelar
 
-        var display = UrlHelper.ForDisplay(url);
+        var display = string.Equals(url, TrustedBrowserBridge.NewTabUrl, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : UrlHelper.ForDisplay(url);
         if (_omnibox.Input.Text != display)
             _omnibox.Input.Text = display;
     }
@@ -1021,7 +1145,8 @@ public sealed class BrowserForm : Form
         var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D))
             || (ctrl && shift && key == Keys.A)
             || (alt && (key == Keys.D || key == Keys.Left || key == Keys.Right || key == Keys.Home))
-            || key == Keys.F5 || (key == Keys.Escape && _loading);
+            || key is Keys.F5 or Keys.F11
+            || (key == Keys.Escape && !ActivePageIsFullscreen() && (_browserFullscreen || _loading));
 
         if (!isShortcut) return;
 
@@ -1069,6 +1194,11 @@ public sealed class BrowserForm : Form
                 _core?.Reload();
                 return true;
 
+            case Keys.F11:
+                _browserFullscreen = !_browserFullscreen;
+                SynchronizeFullscreen();
+                return true;
+
             case Keys.Left when alt:
                 if (_core?.CanGoBack == true) _core.GoBack();
                 return true;
@@ -1078,6 +1208,13 @@ public sealed class BrowserForm : Form
                 return true;
 
             case Keys.Escape:
+                if (ActivePageIsFullscreen()) return false;
+                if (_browserFullscreen)
+                {
+                    _browserFullscreen = false;
+                    SynchronizeFullscreen();
+                    return true;
+                }
                 if (_loading) { _core?.Stop(); return true; }
                 return false;
 

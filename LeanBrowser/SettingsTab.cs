@@ -4,6 +4,7 @@ namespace LeanBrowser;
 public sealed class SettingsTab : TabPage
 {
     private readonly Action<bool> _setTheme;
+    private readonly Action<Color> _setAccent;
     private readonly Action _clearPasswords;
     private readonly Func<IReadOnlyList<Bookmark>> _loadBookmarks;
     private readonly Action _addBookmark;
@@ -21,6 +22,7 @@ public sealed class SettingsTab : TabPage
     private readonly SettingsCard _passwordCard = new();
     private readonly RadioButton _light = new() { Text = "Modo claro", AutoSize = true };
     private readonly RadioButton _dark = new() { Text = "Modo escuro", AutoSize = true };
+    private readonly Button _accentButton = ActionButton("Cor de destaque…");
     private readonly ListBox _favorites = new() { IntegralHeight = false };
     private readonly Button _refresh = ActionButton("Atualizar");
     private readonly Button _add = ActionButton("Adicionar página atual");
@@ -30,10 +32,10 @@ public sealed class SettingsTab : TabPage
     private bool _syncingTheme;
     public event Action<string>? FavoriteSelected;
 
-    public SettingsTab(Action<bool> setTheme, Action clearPasswords, Func<IReadOnlyList<Bookmark>> loadBookmarks, Action addBookmark, Action<string> removeBookmark, bool isAdmin)
+    public SettingsTab(Action<bool> setTheme, Action clearPasswords, Func<IReadOnlyList<Bookmark>> loadBookmarks, Action addBookmark, Action<string> removeBookmark, bool isAdmin, Action<Color> setAccent)
         : base("Configurações")
     {
-        _setTheme = setTheme; _clearPasswords = clearPasswords; _loadBookmarks = loadBookmarks; _addBookmark = addBookmark; _removeBookmark = removeBookmark; _isAdmin = isAdmin;
+        _setTheme = setTheme; _setAccent = setAccent; _clearPasswords = clearPasswords; _loadBookmarks = loadBookmarks; _addBookmark = addBookmark; _removeBookmark = removeBookmark; _isAdmin = isAdmin;
         Controls.Add(_main);
         Controls.Add(_sidebar);
         BuildSidebar(); BuildMain();
@@ -41,6 +43,11 @@ public sealed class SettingsTab : TabPage
         _searchInput.LostFocus += (_, _) => { if (string.IsNullOrWhiteSpace(_searchInput.Text)) { _searchInput.Text = "Pesquisar nas configurações"; _searchInput.ForeColor = Theme.InkMuted; } };
         _light.CheckedChanged += (_, _) => { if (!_syncingTheme && _light.Checked) _setTheme(false); };
         _dark.CheckedChanged += (_, _) => { if (!_syncingTheme && _dark.Checked) _setTheme(true); };
+        _accentButton.Click += (_, _) =>
+        {
+            using var picker = new ColorDialog { Color = Theme.CustomAccent ?? Theme.Accent, FullOpen = true };
+            if (picker.ShowDialog(this) == DialogResult.OK) _setAccent(picker.Color);
+        };
         _refresh.Click += (_, _) => ReloadBookmarks();
         _add.Click += (_, _) => { _addBookmark(); ReloadBookmarks(); };
         _remove.Click += (_, _) => { if (_favorites.SelectedItem is BookmarkItem item) { _removeBookmark(item.Url); ReloadBookmarks(); } };
@@ -61,6 +68,7 @@ public sealed class SettingsTab : TabPage
         BackColor = Theme.Chrome; _sidebar.BackColor = Theme.Surface; _main.BackColor = Theme.Chrome; _search.BackColor = Theme.Surface;
         foreach (var nav in _navigation) { nav.BackColor = Theme.Surface; nav.ForeColor = Theme.InkMuted; nav.FlatAppearance.MouseOverBackColor = Theme.SurfaceHot; }
         foreach (var card in new[] { _appearanceCard, _favoritesCard, _passwordCard }) card.ApplyTheme();
+        _accentButton.ForeColor = Theme.Accent;
         _searchInput.BackColor = Theme.Surface; _searchInput.ForeColor = _searchInput.Text == "Pesquisar nas configurações" ? Theme.InkMuted : Theme.Ink; _searchIcon.BackColor = Theme.Surface; _searchIcon.ForeColor = Theme.InkMuted;
         _favorites.BackColor = Theme.SurfaceHot; _favorites.ForeColor = Theme.Ink;
         _syncingTheme = true; _light.Checked = !Theme.IsDark; _dark.Checked = Theme.IsDark; _syncingTheme = false; Invalidate(true);
@@ -149,7 +157,7 @@ public sealed class SettingsTab : TabPage
         _search.Controls.Add(_searchInput); _search.Controls.Add(_searchIcon); _searchInput.Dock = DockStyle.Fill; _searchInput.Padding = new Padding(4);
         _main.Controls.Add(_search); _main.Controls.Add(_title); _main.Controls.Add(_subtitle); _main.Controls.Add(_appearanceCard); _main.Controls.Add(_favoritesCard);
         if (_isAdmin) _main.Controls.Add(_passwordCard);
-        AddCardHeader(_appearanceCard, "Aparência", "Escolha como o navegador, as abas e as páginas devem aparecer."); _appearanceCard.Controls.Add(_light); _appearanceCard.Controls.Add(_dark);
+        AddCardHeader(_appearanceCard, "Aparência", "Escolha como o navegador, as abas e as páginas devem aparecer."); _appearanceCard.Controls.Add(_light); _appearanceCard.Controls.Add(_dark); _appearanceCard.Controls.Add(_accentButton);
         AddCardHeader(_favoritesCard, "Favoritos", "Acesse suas páginas favoritas sem sair das configurações."); _favoritesCard.Controls.Add(_favorites); _favoritesCard.Controls.Add(_add); _favoritesCard.Controls.Add(_remove); _favoritesCard.Controls.Add(_refresh);
         AddCardHeader(_passwordCard, "Senhas salvas", "Gerencie as senhas armazenadas neste perfil."); _passwordCard.Controls.Add(_clear);
     }
@@ -170,10 +178,10 @@ public sealed class SettingsTab : TabPage
     {
         var width = Math.Max(520, _main.ClientSize.Width - _main.Padding.Horizontal);
         _search.Location = new Point(0, 0); _search.Width = Math.Min(760, width); _title.Location = new Point(0, 64); _subtitle.Location = new Point(0, 101);
-        _appearanceCard.Location = new Point(0, 140); _appearanceCard.Size = new Size(width, 128); _light.Location = new Point(24, 86); _dark.Location = new Point(150, 86);
-        _favoritesCard.Location = new Point(0, 286); _favoritesCard.Size = new Size(width, 276); _favorites.Location = new Point(24, 82); _favorites.Size = new Size(Math.Min(width - 48, 680), 132);
+        _appearanceCard.Location = new Point(0, 140); _appearanceCard.Size = new Size(width, 176); _light.Location = new Point(24, 86); _dark.Location = new Point(150, 86); _accentButton.Location = new Point(24, 124);
+        _favoritesCard.Location = new Point(0, 334); _favoritesCard.Size = new Size(width, 276); _favorites.Location = new Point(24, 82); _favorites.Size = new Size(Math.Min(width - 48, 680), 132);
         _add.Location = new Point(24, 226); _remove.Location = new Point(190, 226); _refresh.Location = new Point(352, 226);
-        _passwordCard.Location = new Point(0, 580); _passwordCard.Size = new Size(width, 116); _clear.Location = new Point(24, 70); _main.AutoScrollMinSize = new Size(0, _isAdmin ? 730 : 580);
+        _passwordCard.Location = new Point(0, 628); _passwordCard.Size = new Size(width, 116); _clear.Location = new Point(24, 70); _main.AutoScrollMinSize = new Size(0, _isAdmin ? 778 : 628);
     }
 
     private static Label Header(string text, float size, bool bold) => new() { Text = text, AutoSize = true, Font = new Font(Theme.UiFont, size, bold ? FontStyle.Bold : FontStyle.Regular), BackColor = Color.Transparent, ForeColor = Theme.Ink };

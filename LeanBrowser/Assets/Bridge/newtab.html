@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action https://www.google.com; frame-ancestors 'none'">
+  <meta name="color-scheme" content="light dark">
+  <title>Nova guia — CottonBrowser</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="newtab-page">
+  <header class="newtab-topbar">
+    <a class="brand" href="newtab.html" aria-label="CottonBrowser — Nova guia">
+      <span class="brand-mark" aria-hidden="true">c</span>
+    </a>
+    <span class="topbar-note">Seu espaço de navegação</span>
+  </header>
+
+  <main class="newtab-main">
+    <section class="welcome" aria-labelledby="welcome-title">
+      <div class="date-line">
+        <span class="date-dot" aria-hidden="true"></span>
+        <time id="local-date">Um novo espaço para começar</time>
+        <span class="date-divider" aria-hidden="true">·</span>
+        <time id="local-time" aria-label="Horário local"></time>
+      </div>
+      <h1 id="welcome-title">Bom dia.</h1>
+      <p class="welcome-copy">Pesquise, encontre seu próximo destino e siga no seu ritmo.</p>
+
+      <form class="web-search" action="https://www.google.com/search" method="get" role="search">
+        <span class="search-glyph" aria-hidden="true">⌕</span>
+        <input id="web-search-input" type="search" name="q" placeholder="Pesquisar na web" aria-label="Pesquisar na web" autocomplete="off" enterkeyhint="search">
+        <button class="search-submit" type="submit" aria-label="Pesquisar">
+          <span aria-hidden="true">↗</span>
+        </button>
+      </form>
+    </section>
+
+    <section class="quick-section" aria-labelledby="quick-title">
+      <div class="section-heading">
+        <h2 id="quick-title">Acesso rápido</h2>
+        <span>Seus destinos essenciais</span>
+      </div>
+      <nav class="quick-links" aria-label="Acesso rápido">
+        <a class="quick-link" href="https://www.google.com/">
+          <span class="quick-mark mark-google" aria-hidden="true">G</span>
+          <span class="quick-label">Google</span>
+          <span class="quick-arrow" aria-hidden="true">↗</span>
+        </a>
+        <a class="quick-link" href="https://mail.google.com/">
+          <span class="quick-mark mark-mail" aria-hidden="true">M</span>
+          <span class="quick-label">Gmail</span>
+          <span class="quick-arrow" aria-hidden="true">↗</span>
+        </a>
+        <a class="quick-link" href="https://drive.google.com/">
+          <span class="quick-mark mark-drive" aria-hidden="true">D</span>
+          <span class="quick-label">Drive</span>
+          <span class="quick-arrow" aria-hidden="true">↗</span>
+        </a>
+        <a class="quick-link" href="https://github.com/">
+          <span class="quick-mark mark-github" aria-hidden="true">GH</span>
+          <span class="quick-label">GitHub</span>
+          <span class="quick-arrow" aria-hidden="true">↗</span>
+        </a>
+      </nav>
+    </section>
+
+    <p class="keyboard-tip"><kbd>Ctrl</kbd><span>+</span><kbd>L</kbd> para focar a barra de endereços</p>
+  </main>
+
+  <footer class="newtab-footer">
+    <span>CottonBrowser</span>
+    <span>Feito para manter o essencial à mão.</span>
+  </footer>
+  <script src="newtab.js"></script>
+</body>
+</html>

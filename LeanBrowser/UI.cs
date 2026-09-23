@@ -1,38 +1,106 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.Runtime.InteropServices;
 
 namespace LeanBrowser;
 
-/// <summary>Paleta CottonBrowser: clara, arejada e com contraste suave.</summary>
+/// <summary>Paleta Catppuccin Latte/Mocha: suave, consistente e de alto conforto visual.</summary>
 public static class Theme
 {
+    private static Color? _customAccent;
     public static bool IsDark { get; private set; }
-    public static Color Chrome { get; private set; } = Color.FromArgb(0xF7, 0xF9, 0xFC); // barra
-    public static Color Surface { get; private set; } = Color.White; // campos e cartões
-    public static Color SurfaceHot { get; private set; } = Color.FromArgb(0xEC, 0xF1, 0xF7); // hover
-    public static Color Divider { get; private set; } = Color.FromArgb(0xD6, 0xDF, 0xEA);
-    public static Color Ink { get; private set; } = Color.FromArgb(0x16, 0x22, 0x33); // texto
-    public static Color InkMuted { get; private set; } = Color.FromArgb(0x5E, 0x6D, 0x82); // icones
-    public static Color InkDisabled { get; private set; } = Color.FromArgb(0xA9, 0xB5, 0xC4);
-    public static Color Accent { get; private set; } = Color.FromArgb(0x1F, 0x6F, 0xD5); // foco
-    public static Color Shield { get; private set; } = Color.FromArgb(0x16, 0x8A, 0x5A); // escudo
+    public static Color Chrome { get; private set; } = Color.FromArgb(0xEF, 0xF1, 0xF5); // Latte base
+    public static Color Surface { get; private set; } = Color.White;
+    public static Color SurfaceHot { get; private set; } = Color.FromArgb(0xE6, 0xE9, 0xEF);
+    public static Color Divider { get; private set; } = Color.FromArgb(0xCC, 0xD0, 0xDA);
+    public static Color Ink { get; private set; } = Color.FromArgb(0x4C, 0x4F, 0x69);
+    public static Color InkMuted { get; private set; } = Color.FromArgb(0x6C, 0x6F, 0x85);
+    public static Color InkDisabled { get; private set; } = Color.FromArgb(0x9C, 0xA0, 0xB0);
+    public static Color Accent { get; private set; } = Color.FromArgb(0x88, 0x39, 0xEF);
+    public static Color Shield { get; private set; } = Color.FromArgb(0x40, 0xA0, 0x2B);
 
     public static void SetDark(bool dark)
     {
         IsDark = dark;
-        Chrome = dark ? Color.FromArgb(0x14, 0x18, 0x20) : Color.FromArgb(0xF7, 0xF9, 0xFC);
-        Surface = dark ? Color.FromArgb(0x21, 0x29, 0x36) : Color.White;
-        SurfaceHot = dark ? Color.FromArgb(0x2B, 0x35, 0x44) : Color.FromArgb(0xEC, 0xF1, 0xF7);
-        Divider = dark ? Color.FromArgb(0x3A, 0x46, 0x57) : Color.FromArgb(0xD6, 0xDF, 0xEA);
-        Ink = dark ? Color.FromArgb(0xF4, 0xF7, 0xFB) : Color.FromArgb(0x16, 0x22, 0x33);
-        InkMuted = dark ? Color.FromArgb(0xA9, 0xB6, 0xC8) : Color.FromArgb(0x5E, 0x6D, 0x82);
-        InkDisabled = dark ? Color.FromArgb(0x68, 0x76, 0x89) : Color.FromArgb(0xA9, 0xB5, 0xC4);
-        Accent = dark ? Color.FromArgb(0x70, 0xA9, 0xFF) : Color.FromArgb(0x1F, 0x6F, 0xD5);
-        Shield = dark ? Color.FromArgb(0x63, 0xD3, 0x9A) : Color.FromArgb(0x16, 0x8A, 0x5A);
+        Chrome = dark ? Color.FromArgb(0x1E, 0x1E, 0x2E) : Color.FromArgb(0xEF, 0xF1, 0xF5);
+        Surface = dark ? Color.FromArgb(0x31, 0x32, 0x44) : Color.White;
+        SurfaceHot = dark ? Color.FromArgb(0x29, 0x2A, 0x3D) : Color.FromArgb(0xE6, 0xE9, 0xEF);
+        Divider = dark ? Color.FromArgb(0x45, 0x47, 0x5A) : Color.FromArgb(0xCC, 0xD0, 0xDA);
+        Ink = dark ? Color.FromArgb(0xCD, 0xD6, 0xF4) : Color.FromArgb(0x4C, 0x4F, 0x69);
+        InkMuted = dark ? Color.FromArgb(0xA6, 0xAD, 0xC8) : Color.FromArgb(0x6C, 0x6F, 0x85);
+        InkDisabled = dark ? Color.FromArgb(0x6C, 0x70, 0x86) : Color.FromArgb(0x9C, 0xA0, 0xB0);
+        Accent = dark ? Color.FromArgb(0xCB, 0xA6, 0xF7) : Color.FromArgb(0x88, 0x39, 0xEF);
+        Shield = dark ? Color.FromArgb(0xA6, 0xE3, 0xA1) : Color.FromArgb(0x40, 0xA0, 0x2B);
+        RecalculateAccent();
     }
 
-    public const string UiFont   = "Segoe UI";
-    public const string IconFont = "Segoe MDL2 Assets"; // presente desde o Win10
+    public static Color? CustomAccent => _customAccent;
+
+    public static void SetAccent(Color? color)
+    {
+        _customAccent = color is { } selected
+            ? Color.FromArgb(selected.R, selected.G, selected.B)
+            : null;
+        RecalculateAccent();
+    }
+
+    private static void RecalculateAccent()
+    {
+        if (_customAccent is not { } selected)
+        {
+            Accent = IsDark ? Color.FromArgb(0xCB, 0xA6, 0xF7) : Color.FromArgb(0x88, 0x39, 0xEF);
+            Shield = IsDark ? Color.FromArgb(0xA6, 0xE3, 0xA1) : Color.FromArgb(0x40, 0xA0, 0x2B);
+            return;
+        }
+
+        // 3:1 mantém o indicador e o anel visíveis sobre a superfície.
+        Accent = EnsureContrast(selected, Surface, IsDark ? Color.White : Color.Black);
+
+        // O escudo continua semanticamente verde, mas recebe um leve matiz da
+        // cor escolhida e mantém contraste sobre a superfície atual.
+        var green = IsDark ? Color.FromArgb(0xA6, 0xE3, 0xA1) : Color.FromArgb(0x40, 0xA0, 0x2B);
+        Shield = EnsureContrast(Mix(green, selected, 0.12f), Surface,
+            IsDark ? Color.White : Color.Black);
+    }
+
+    private static Color EnsureContrast(Color color, Color background, Color target)
+    {
+        for (var i = 0; i < 20 && Contrast(color, background) < 3.0; i++)
+            color = Mix(color, target, 0.10f);
+        return color;
+    }
+
+    private static double Contrast(Color a, Color b)
+    {
+        static double Channel(byte value)
+        {
+            var c = value / 255.0;
+            return c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+        }
+        static double Luminance(Color color) =>
+            0.2126 * Channel(color.R) + 0.7152 * Channel(color.G) + 0.0722 * Channel(color.B);
+
+        var x = Luminance(a);
+        var y = Luminance(b);
+        return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05);
+    }
+
+    private static Color Mix(Color a, Color b, float amount) => Color.FromArgb(
+        (int)Math.Round(a.R + (b.R - a.R) * amount),
+        (int)Math.Round(a.G + (b.G - a.G) * amount),
+        (int)Math.Round(a.B + (b.B - a.B) * amount));
+
+    private static string AvailableFont(params string[] families)
+    {
+        using var fonts = new InstalledFontCollection();
+        foreach (var family in families)
+            if (fonts.Families.Any(item => string.Equals(item.Name, family, StringComparison.OrdinalIgnoreCase)))
+                return family;
+        return families[^1];
+    }
+
+    public static readonly string UiFont = AvailableFont("Segoe UI Variable", "Segoe UI Variable Text", "Segoe UI");
+    public static readonly string IconFont = AvailableFont("Segoe Fluent Icons", "Segoe MDL2 Assets");
 }
 
 /// <summary>Utilitarios de desenho compartilhados.</summary>
@@ -203,6 +271,16 @@ public sealed class Omnibox : Panel
 
     private bool _focused;
     private bool _hot;
+    private readonly System.Windows.Forms.Timer _focusTimer = new() { Interval = 15 };
+    private readonly System.Windows.Forms.Timer _progressTimer = new() { Interval = 30 };
+    private float _focusOpacity;
+    private float _focusFrom;
+    private float _focusTarget;
+    private long _focusStartedAt;
+    private float _navigationProgress;
+    private bool _navigationLoading;
+    private bool _showNavigationProgress;
+    private long _progressCompletedAt;
 
     public Omnibox()
     {
@@ -236,8 +314,10 @@ public sealed class Omnibox : Panel
         Input.AutoCompleteSource = AutoCompleteSource.CustomSource;
         Input.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
 
-        Input.GotFocus  += (_, _) => { _focused = true;  Invalidate(); Input.BackColor = Theme.Surface; _shield.BackColor = Theme.Surface; };
-        Input.LostFocus += (_, _) => { _focused = false; Invalidate(); Input.BackColor = Theme.Surface; _shield.BackColor = Color.Transparent; };
+        _focusTimer.Tick += (_, _) => AdvanceFocusAnimation();
+        _progressTimer.Tick += (_, _) => AdvanceNavigationProgress();
+        Input.GotFocus  += (_, _) => { AnimateFocus(true); Input.BackColor = Theme.Surface; _shield.BackColor = Theme.Surface; };
+        Input.LostFocus += (_, _) => { AnimateFocus(false); Input.BackColor = Theme.Surface; _shield.BackColor = Color.Transparent; };
 
         MouseEnter += (_, _) => { _hot = true;  Invalidate(); };
         MouseLeave += (_, _) => { _hot = false; Invalidate(); };
@@ -251,6 +331,55 @@ public sealed class Omnibox : Panel
     }
 
     public void SetFavorite(bool favorite) => Favorite.SetFavorite(favorite);
+
+    private void AnimateFocus(bool focused)
+    {
+        _focused = focused;
+        _focusFrom = _focusOpacity;
+        _focusTarget = focused ? 1f : 0f;
+        _focusStartedAt = Environment.TickCount64;
+        _focusTimer.Start();
+        Invalidate();
+    }
+
+    private void AdvanceFocusAnimation()
+    {
+        var t = Math.Clamp((Environment.TickCount64 - _focusStartedAt) / 120f, 0f, 1f);
+        var eased = t * t * (3f - 2f * t);
+        _focusOpacity = _focusFrom + (_focusTarget - _focusFrom) * eased;
+        Invalidate();
+        if (t >= 1f) _focusTimer.Stop();
+    }
+
+    public void SetNavigationProgress(bool loading)
+    {
+        if (_navigationLoading == loading) return;
+        _navigationLoading = loading;
+        if (loading)
+        {
+            _navigationProgress = 0.06f;
+            _showNavigationProgress = true;
+        }
+        else if (_showNavigationProgress)
+        {
+            _navigationProgress = 1f;
+            _progressCompletedAt = Environment.TickCount64;
+        }
+        _progressTimer.Start();
+        Invalidate();
+    }
+
+    private void AdvanceNavigationProgress()
+    {
+        if (_navigationLoading)
+            _navigationProgress = Math.Min(0.9f, _navigationProgress + (0.9f - _navigationProgress) * 0.12f);
+        else if (Environment.TickCount64 - _progressCompletedAt >= 180)
+        {
+            _showNavigationProgress = false;
+            _progressTimer.Stop();
+        }
+        Invalidate();
+    }
 
     /// <summary>
     /// Atualiza o indicador a esquerda (cadeado / escudo com contagem).
@@ -303,11 +432,32 @@ public sealed class Omnibox : Panel
         using (var brush = new SolidBrush(fill))
             g.FillPath(brush, path);
 
-        if (_focused)
+        if (_focusOpacity > 0f)
         {
-            using var pen = new Pen(Theme.Accent, 1.6f);
+            using var pen = new Pen(Color.FromArgb((int)(230 * _focusOpacity), Theme.Accent), 1.6f);
             g.DrawPath(pen, path);
         }
+
+        if (_showNavigationProgress)
+        {
+            var width = Math.Max(0, Width - Height);
+            var line = new Rectangle(Height / 2, Height - 3,
+                (int)(width * _navigationProgress), 3);
+            using var brush = new SolidBrush(Theme.Accent);
+            g.FillRectangle(brush, line);
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _focusTimer.Dispose();
+            _progressTimer.Dispose();
+            _glyphFont.Dispose();
+            _countFont.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }
 
@@ -316,6 +466,9 @@ public static class Native
 {
     private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     private const int DWMWCP_ROUND = 2;
+    private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+    private const int DWMSBT_MAINWINDOW = 2;
+    private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
 
     [DllImport("dwmapi.dll", SetLastError = true)]
     private static extern int DwmSetWindowAttribute(
@@ -333,5 +486,31 @@ public static class Native
         {
             // Windows 10 ou anterior: sem cantos arredondados, sem drama.
         }
+    }
+
+    public static bool EnableMica(IntPtr hwnd)
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621)) return false;
+        try
+        {
+            var backdrop = DWMSBT_MAINWINDOW;
+            return DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
+                ref backdrop, sizeof(int)) == 0;
+        }
+        catch (DllNotFoundException) { return false; }
+        catch (EntryPointNotFoundException) { return false; }
+    }
+
+    public static void SetDarkCaption(IntPtr hwnd, bool dark)
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+        try
+        {
+            var value = dark ? 1 : 0;
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                ref value, sizeof(int));
+        }
+        catch (DllNotFoundException) { }
+        catch (EntryPointNotFoundException) { }
     }
 }

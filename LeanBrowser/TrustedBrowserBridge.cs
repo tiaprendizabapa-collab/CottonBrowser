@@ -6,13 +6,14 @@ namespace LeanBrowser;
 
 /// <summary>
 /// The only IPC surface exposed to a WebView. It is available solely to the
-/// bundled, top-level page at https://app.cottonbrowser.test/; Internet pages
+/// bundled, top-level pages at https://app.cottonbrowser.test/; Internet pages
 /// never receive a host object, a generic RPC method, or OS capabilities.
 /// </summary>
 public static class TrustedBrowserBridge
 {
     public const string HostName = "app.cottonbrowser.test";
     public const string UiUrl = "https://app.cottonbrowser.test/index.html";
+    public const string NewTabUrl = "https://app.cottonbrowser.test/newtab.html";
     private const int ProtocolVersion = 1;
     private const int MaxMessageLength = 4 * 1024;
     private const int MaxUrlLength = 2 * 1024;
