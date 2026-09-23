@@ -17,16 +17,18 @@ Fechar a última aba encerra a janela. Links HTTP/HTTPS que solicitam uma nova j
 
 | Comando | Ação |
 |---|---|
-| Ctrl+T / + | Abrir a página inicial em outra aba |
+| Ctrl+T / + | Abrir nova aba com a barra de pesquisa pronta para digitar |
 | Ctrl+W / × na guia | Fechar a aba selecionada pelo teclado ou a guia clicada |
 | Ctrl+Tab / Ctrl+Shift+Tab | Próxima / anterior |
 | Ctrl+D | Adicionar ou atualizar favorito da página |
 | Ctrl+J | Abrir o gestor de downloads |
 | Ctrl++ / Ctrl+- / Ctrl+0 | Aumentar, diminuir ou repor o zoom da aba |
+| Lupa / menu de três pontos | Redefinir o zoom para 100% |
 | Favoritos | Adicionar, remover a página atual ou abrir links salvos |
 | Apagar senhas salvas | Apagar todas as senhas do perfil, após confirmação |
 
 Os atalhos existentes permanecem disponíveis. Ctrl+Shift+A afeta o bloqueador da aba atual.
+Ao digitar um endereço conhecido, a barra completa o domínio e destaca a parte sugerida; o X da lista remove essa entrada do histórico. O menu de três pontos fecha ao clicar fora dele.
 
 ## Persistência
 
