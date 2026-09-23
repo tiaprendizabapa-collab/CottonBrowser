@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -53,6 +54,12 @@ public sealed class BrowserForm : Form
     private readonly System.Windows.Forms.Timer _overflowOutsideClickTimer = new() { Interval = 15 };
     private bool _overflowAwaitingRelease;
     private readonly ToolTip _zoomTip = new();
+    private readonly BrowserUpdateService _updates = new();
+    private readonly CancellationTokenSource _updateLifetime = new();
+    private readonly System.Windows.Forms.Timer _updatePoll = new() { Interval = 3 * 60 * 60 * 1000 };
+    private readonly ToolStripMenuItem _updateItem = new("Verificar atualizações");
+    private BrowserUpdate? _availableUpdate;
+    private bool _updateBusy;
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
     private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
     private readonly AccessControl _access = new();
@@ -144,6 +151,7 @@ public sealed class BrowserForm : Form
         _suggestionPanel.Dismissed += DismissSuggestion;
         _suggestionDebounce.Tick += OnSuggestionDebounce;
         _zoomFade.Tick += OnZoomFade;
+        _updatePoll.Tick += async (_, _) => await CheckForUpdatesAsync(manual: false);
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
@@ -305,6 +313,11 @@ public sealed class BrowserForm : Form
         downloads.Click += (_, _) => OpenDownloads();
         var resetZoom = new ToolStripMenuItem("Redefinir zoom (100%)");
         resetZoom.Click += (_, _) => ChangeZoom(0);
+        _updateItem.Click += async (_, _) =>
+        {
+            var update = _availableUpdate ?? await CheckForUpdatesAsync(manual: true);
+            if (update is not null) await InstallUpdateAsync(update);
+        };
         var protection = new ToolStripMenuItem("Proteção");
         var protectionEnabled = new ToolStripMenuItem("Bloquear anúncios (Ctrl+Shift+A)");
         protectionEnabled.Click += async (_, _) => await ToggleProtectionAsync();
@@ -334,7 +347,8 @@ public sealed class BrowserForm : Form
                 _adProtection.Available ? "uBlock Origin Lite ativo" : "Somente bloqueio básico ativo";
         };
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings, protectionStatus });
-        _overflowMenu.Items.AddRange(new ToolStripItem[] { browserCenter, configuration, profile, downloads, resetZoom, protection });
+        _overflowMenu.Items.AddRange(new ToolStripItem[]
+            { browserCenter, configuration, profile, downloads, resetZoom, _updateItem, protection });
         _overflowMenu.Font = new Font(Theme.UiFont, 9.5f);
         _overflowMenu.BackColor = Theme.Surface;
         _overflowMenu.ForeColor = Theme.Ink;
@@ -370,6 +384,11 @@ public sealed class BrowserForm : Form
         {
             var y = centerY + i * spacing;
             g.FillEllipse(dotBrush, centerX - radius, y - radius, radius * 2, radius * 2);
+        }
+        if (_availableUpdate is not null)
+        {
+            using var updateBrush = new SolidBrush(Theme.Accent);
+            g.FillEllipse(updateBrush, _overflowButton.Width - 11, 3, 7, 7);
         }
     }
 
@@ -741,6 +760,115 @@ public sealed class BrowserForm : Form
     }
     // ----------------------------------------------------- Inicializacao ---
 
+    protected override async void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        try
+        {
+            await Task.Delay(1500, _updateLifetime.Token);
+            await CheckForUpdatesAsync(manual: false);
+            if (!IsDisposed) _updatePoll.Start();
+        }
+        catch (OperationCanceledException) { /* janela encerrada */ }
+    }
+
+    private async Task<BrowserUpdate?> CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateBusy || IsDisposed) return null;
+        _updateBusy = true;
+        _updateItem.Enabled = false;
+        _updateItem.Text = "Verificando atualizações...";
+        try
+        {
+            var current = typeof(BrowserForm).Assembly.GetName().Version ?? new Version(1, 0, 0, 0);
+            var update = await _updates.CheckAsync(current, _updateLifetime.Token);
+            if (IsDisposed) return null;
+            _availableUpdate = update;
+            _updateItem.Text = update is null
+                ? "Verificar atualizações"
+                : $"Atualização disponível ({update.Tag})";
+            _overflowButton.Invalidate();
+            if (manual && update is null)
+                MessageBox.Show(this, "Nenhuma versão nova foi publicada para este navegador.",
+                    "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return update;
+        }
+        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            if (manual && !IsDisposed)
+                MessageBox.Show(this, "Não foi possível verificar as atualizações.\n\n" + ex.Message,
+                    "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return null;
+        }
+        finally
+        {
+            _updateBusy = false;
+            if (!IsDisposed)
+            {
+                _updateItem.Enabled = true;
+                if (_updateItem.Text == "Verificando atualizações...")
+                    _updateItem.Text = _availableUpdate is null
+                        ? "Verificar atualizações"
+                        : $"Atualização disponível ({_availableUpdate.Tag})";
+            }
+        }
+    }
+
+    private async Task InstallUpdateAsync(BrowserUpdate update)
+    {
+        if (_updateBusy || IsDisposed) return;
+        if (MessageBox.Show(this,
+            $"Instalar o CottonBrowser {update.Tag} agora? O navegador será fechado e reiniciado.",
+            "Atualização disponível", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        _updateBusy = true;
+        _updateItem.Enabled = false;
+        _updateItem.Text = "Baixando atualização...";
+        try
+        {
+            var progress = new Progress<int>(percent =>
+            {
+                if (!IsDisposed) _updateItem.Text = $"Baixando atualização... {percent}%";
+            });
+            var package = await _updates.DownloadAsync(update, progress, _updateLifetime.Token);
+            if (IsDisposed) return;
+
+            var start = new ProcessStartInfo(package.UpdaterPath)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = Path.GetDirectoryName(package.UpdaterPath)!
+            };
+            start.ArgumentList.Add(Environment.ProcessId.ToString());
+            start.ArgumentList.Add(package.ArchivePath);
+            start.ArgumentList.Add(AppContext.BaseDirectory);
+            start.ArgumentList.Add(update.Sha256);
+            if (Process.Start(start) is null)
+                throw new IOException("Não foi possível iniciar o instalador da atualização.");
+            Close();
+        }
+        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (!IsDisposed)
+                MessageBox.Show(this, "Não foi possível baixar ou iniciar a atualização.\n\n" + ex.Message,
+                    "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _updateBusy = false;
+            if (!IsDisposed)
+            {
+                _updateItem.Enabled = true;
+                _updateItem.Text = $"Atualização disponível ({update.Tag})";
+            }
+        }
+    }
+
     protected override async void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
@@ -766,6 +894,10 @@ public sealed class BrowserForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _updateLifetime.Cancel();
+        _updatePoll.Dispose();
+        _updates.Dispose();
+        _updateLifetime.Dispose();
         Application.RemoveMessageFilter(_overflowDismissFilter);
         _overflowOutsideClickTimer.Dispose();
         _zoomTip.Dispose();

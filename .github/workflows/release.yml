@@ -1,0 +1,48 @@
+name: Publicar CottonBrowser
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compilar e empacotar
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Tag de versão inválida: $tag" }
+          $version = $tag.Substring(1)
+          $app = Join-Path $env:RUNNER_TEMP 'cotton-app'
+          $updater = Join-Path $env:RUNNER_TEMP 'cotton-updater'
+          $package = Join-Path $env:RUNNER_TEMP 'cotton-package'
+          New-Item -ItemType Directory -Path $package | Out-Null
+
+          dotnet publish LeanBrowser/LeanBrowser.csproj -c Release -r win-x64 --self-contained false -o $app "-p:Version=$version"
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar o navegador.' }
+          dotnet publish CottonUpdater/CottonUpdater.csproj -c Release -r win-x64 --self-contained false -o $updater "-p:Version=$version"
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar o atualizador.' }
+
+          Copy-Item (Join-Path $app 'CottonBrowser.exe') $package
+          Copy-Item (Join-Path $updater 'CottonUpdater.exe') $package
+          Copy-Item (Join-Path $app 'Assets') $package -Recurse
+          $zip = Join-Path $env:RUNNER_TEMP 'CottonBrowser-win-x64.zip'
+          Compress-Archive -Path (Join-Path $package '*') -DestinationPath $zip
+
+      - name: Publicar Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME (Join-Path $env:RUNNER_TEMP 'CottonBrowser-win-x64.zip') --verify-tag --title "CottonBrowser $env:GITHUB_REF_NAME" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao publicar a Release.' }

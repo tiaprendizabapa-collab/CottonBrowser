@@ -1,5 +1,7 @@
 # LeanBrowser
 
+Atualização pelo próprio navegador e publicação de novas versões: [UPDATES.md](../UPDATES.md).
+
 Navegador minimalista construído sobre o motor web **nativo do sistema**
 (Microsoft Edge WebView2), sem Chromium embutido.
 
@@ -38,12 +40,12 @@ Ou manualmente:
 ```cmd
 dotnet restore
 dotnet publish -c Release -r win-x64 -o .\dist
-.\dist\LeanBrowser.exe
+.\dist\CottonBrowser.exe
 ```
 
 Para iterar durante o desenvolvimento: `dotnet run`.
 
-O binário final fica em `dist\LeanBrowser.exe` (~2 MB, *framework-dependent*:
+O binário final fica em `dist\CottonBrowser.exe` (~2 MB, *framework-dependent*:
 reaproveita o .NET já instalado em vez de duplicar ~70 MB de runtime por app).
 
 ---

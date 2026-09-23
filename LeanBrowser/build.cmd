@@ -28,7 +28,7 @@ echo Versao do dotnet encontrada:
 "%DOTNET%" --version
 echo.
 
-echo [1/3] Restaurando pacotes...
+echo [1/4] Restaurando pacotes...
 "%DOTNET%" restore
 if errorlevel 1 (
     echo.
@@ -38,7 +38,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/3] Publicando ^(single-file, framework-dependent, ReadyToRun^)...
+echo [2/4] Publicando ^(single-file, framework-dependent, ReadyToRun^)...
 "%DOTNET%" publish -c Release -r win-x64 -o .\dist
 if errorlevel 1 (
     echo.
@@ -47,7 +47,19 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Pronto.
+echo [3/4] Publicando o atualizador...
+"%DOTNET%" publish ..\CottonUpdater\CottonUpdater.csproj -c Release -r win-x64 -o ..\CottonUpdater\dist
+if errorlevel 1 (
+    echo ERRO ao publicar o atualizador.
+    goto :fim
+)
+copy /y "..\CottonUpdater\dist\CottonUpdater.exe" ".\dist\CottonUpdater.exe" >nul
+if errorlevel 1 (
+    echo ERRO ao copiar o atualizador.
+    goto :fim
+)
+
+echo [4/4] Pronto.
 echo.
 echo Executavel: %CD%\dist\CottonBrowser.exe
 echo.
