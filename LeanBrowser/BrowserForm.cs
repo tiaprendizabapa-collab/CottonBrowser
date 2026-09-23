@@ -7,8 +7,10 @@ namespace LeanBrowser;
 public sealed class BrowserForm : Form
 {
     private const string HomePage = TrustedBrowserBridge.NewTabUrl;
+    private const int ResizeBorder = 6;
 
     private readonly Panel      _toolbar  = new();
+    private readonly BookmarksBar _bookmarksBar = new();
     private readonly ToolButton _back     = new("\uE72B", "Voltar");
     private readonly ToolButton _forward  = new("\uE72A", "Avancar");
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
@@ -37,6 +39,9 @@ public sealed class BrowserForm : Form
         TabStop = false,
         UseVisualStyleBackColor = false
     };
+    private readonly WindowCaptionButton _minimizeButton = new(WindowCaptionAction.Minimize);
+    private readonly WindowCaptionButton _maximizeButton = new(WindowCaptionAction.Maximize);
+    private readonly WindowCaptionButton _closeButton = new(WindowCaptionAction.Close);
     private readonly ContextMenuStrip _overflowMenu = new()
     {
         ShowImageMargin = false,
@@ -98,6 +103,8 @@ public sealed class BrowserForm : Form
 
         Text = "CottonBrowser";
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        FormBorderStyle = FormBorderStyle.None;
+        Padding = new Padding(6);
         BackColor = Theme.Chrome;
         ClientSize = new Size(1200, 780);
         MinimumSize = new Size(560, 360);
@@ -114,9 +121,26 @@ public sealed class BrowserForm : Form
         _tabView.BrandClicked += OnBrandClicked;
 
         _tabBar.Controls.Add(_tabView.HeaderStrip);
-        _tabBar.Controls.Add(_overflowButton);
+        _bookmarksBar.SetTrailingControl(_overflowButton);
+        _tabBar.Controls.Add(_minimizeButton);
+        _tabBar.Controls.Add(_maximizeButton);
+        _tabBar.Controls.Add(_closeButton);
         _tabBar.Resize += (_, _) => LayoutTabBar();
+        _tabBar.MouseDown += OnTitleBarMouseDown;
+        _tabBar.MouseDoubleClick += OnTitleBarMouseDoubleClick;
+        _tabView.HeaderStrip.MouseDown += OnTitleBarMouseDown;
+        _tabView.HeaderStrip.MouseDoubleClick += OnTitleBarMouseDoubleClick;
+        _minimizeButton.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        _maximizeButton.Click += (_, _) => ToggleMaximize();
+        _closeButton.Click += (_, _) => Close();
+        _bookmarksBar.OpenRequested += async (url, newTab) =>
+        {
+            if (!BookmarkStore.IsWebUrl(url)) return;
+            if (newTab || _core is null) await OpenTabAsync(url);
+            else _core.Navigate(url);
+        };
         Controls.Add(_tabView);
+        Controls.Add(_bookmarksBar);
         Controls.Add(_toolbar);
         Controls.Add(_tabBar);
         Controls.Add(_suggestionPanel);
@@ -129,9 +153,42 @@ public sealed class BrowserForm : Form
         // a primeira pintura para que o modo escuro já nasça consistente.
         ApplyThemeRecursive(this);
         _tabView.ApplyTheme();
+        _bookmarksBar.ApplyTheme();
+        RefreshBookmarksBar();
 
         ResumeLayout(false);
         LayoutTabBar();
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            // Preserva o redimensionamento e os comandos de janela sem a barra de título nativa.
+            parameters.Style |= 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000;
+            return parameters;
+        }
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == 0x0084 && !_windowFullscreen && WindowState == FormWindowState.Normal)
+        {
+            var packed = message.LParam.ToInt64();
+            var point = PointToClient(new Point(
+                unchecked((short)(packed & 0xffff)),
+                unchecked((short)((packed >> 16) & 0xffff))));
+            var left = point.X < ResizeBorder;
+            var right = point.X >= ClientSize.Width - ResizeBorder;
+            var top = point.Y < ResizeBorder;
+            var bottom = point.Y >= ClientSize.Height - ResizeBorder;
+            var hit = top ? (left ? 13 : right ? 14 : 12)
+                : bottom ? (left ? 16 : right ? 17 : 15)
+                : left ? 10 : right ? 11 : 0;
+            if (hit != 0) { message.Result = (IntPtr)hit; return; }
+        }
+        base.WndProc(ref message);
     }
 
     // ---------------------------------------------------------------- UI ---
@@ -231,12 +288,36 @@ public sealed class BrowserForm : Form
 
     private void LayoutTabBar()
     {
-        const int menuSpace = 44;
+        var captionWidth = _minimizeButton.Width + _maximizeButton.Width + _closeButton.Width;
+        var captionLeft = Math.Max(0, _tabBar.ClientSize.Width - captionWidth);
         _tabView.HeaderStrip.SetBounds(0, 0,
-            Math.Max(0, _tabBar.ClientSize.Width - menuSpace), _tabBar.ClientSize.Height);
-        _overflowButton.Location = new Point(
-            Math.Max(0, _tabBar.ClientSize.Width - _overflowButton.Width - 4),
-            Math.Max(0, (_tabBar.ClientSize.Height - _overflowButton.Height) / 2));
+            captionLeft, _tabBar.ClientSize.Height);
+        _minimizeButton.Location = new Point(captionLeft, 0);
+        _maximizeButton.Location = new Point(captionLeft + _minimizeButton.Width, 0);
+        _closeButton.Location = new Point(captionLeft + _minimizeButton.Width + _maximizeButton.Width, 0);
+    }
+
+    private void OnTitleBarMouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left && !_windowFullscreen)
+            Native.BeginWindowDrag(Handle);
+    }
+
+    private void OnTitleBarMouseDoubleClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left && !_windowFullscreen) ToggleMaximize();
+    }
+
+    private void ToggleMaximize()
+    {
+        if (_windowFullscreen) return;
+        if (WindowState == FormWindowState.Maximized)
+            WindowState = FormWindowState.Normal;
+        else
+        {
+            MaximizedBounds = Screen.FromControl(this).WorkingArea;
+            WindowState = FormWindowState.Maximized;
+        }
     }
 
     private void BuildMenus()
@@ -381,8 +462,18 @@ public sealed class BrowserForm : Form
         {
             _bookmarks.Add(_core.Source, _core.DocumentTitle);
             _omnibox.SetFavorite(true);
+            RefreshBookmarksBar();
+            _settingsTab?.ReloadBookmarks();
         }
     });
+
+    private void RefreshBookmarksBar()
+    {
+        try { _bookmarksBar.SetBookmarks(_bookmarks.Load()); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        { _bookmarksBar.SetBookmarks(Array.Empty<Bookmark>()); }
+        _bookmarksBar.Visible = !_windowFullscreen;
+    }
 
     private void OpenSettings()
     {
@@ -391,7 +482,12 @@ public sealed class BrowserForm : Form
             _settingsTab = new SettingsTab(ApplyTheme, ClearSavedPasswords, () =>
             {
                 try { return _bookmarks.Load(); } catch { return Array.Empty<Bookmark>(); }
-            }, AddBookmark, url => WithBookmarkErrors(() => _bookmarks.Remove(url)), _access.IsAdvancedMode, ApplyAccent);
+            }, AddBookmark, url => WithBookmarkErrors(() =>
+            {
+                _bookmarks.Remove(url);
+                RefreshBookmarksBar();
+                _omnibox.SetFavorite(IsFavorite(_core?.Source ?? ""));
+            }), _access.IsAdvancedMode, ApplyAccent);
             _settingsTab.FavoriteSelected += async url => await OpenTabAsync(url);
             _tabView.TabPages.Add(_settingsTab);
         }
@@ -426,9 +522,11 @@ public sealed class BrowserForm : Form
         try { Directory.CreateDirectory(Path.GetDirectoryName(_themePath)!); File.WriteAllText(_themePath, dark ? "dark" : "light"); } catch { }
         BackColor = Theme.Chrome; _toolbar.BackColor = Theme.Chrome; _tabBar.BackColor = Theme.Chrome;
         _overflowButton.BackColor = Theme.Chrome; _overflowButton.ForeColor = Theme.Ink;
+        _minimizeButton.Invalidate(); _maximizeButton.Invalidate(); _closeButton.Invalidate();
         _overflowMenu.BackColor = Theme.Surface; _overflowMenu.ForeColor = Theme.Ink;
         ApplyThemeRecursive(this);
         _tabView.ApplyTheme();
+        _bookmarksBar.ApplyTheme();
         _settingsTab?.ApplyTheme();
         _profileTab?.ApplyTheme();
         _downloadsTab?.ApplyTheme();
@@ -619,9 +717,11 @@ public sealed class BrowserForm : Form
             {
                 _tabBar.Visible = false;
                 _toolbar.Visible = false;
+                _bookmarksBar.Visible = false;
                 WindowState = FormWindowState.Normal;
                 FormBorderStyle = FormBorderStyle.None;
                 Bounds = screenBounds;
+                Padding = Padding.Empty;
                 TopMost = true;
             }
             finally { ResumeLayout(true); }
@@ -630,6 +730,7 @@ public sealed class BrowserForm : Form
             return;
         }
 
+        _windowFullscreen = false;
         SuspendLayout();
         try
         {
@@ -640,9 +741,9 @@ public sealed class BrowserForm : Form
             WindowState = _restoreWindowState;
             _tabBar.Visible = true;
             _toolbar.Visible = true;
+            RefreshBookmarksBar();
         }
         finally { ResumeLayout(true); }
-        _windowFullscreen = false;
         Native.EnableRoundedCorners(Handle);
         Native.EnableMica(Handle);
         Native.SetDarkCaption(Handle, Theme.IsDark);
@@ -801,7 +902,10 @@ public sealed class BrowserForm : Form
                 if (tab.IsDisposed || _tabView.IsDisposed || request != faviconRequest)
                     favicon.Dispose();
                 else
+                {
+                    _bookmarksBar.RememberFavicon(core.Source, favicon);
                     _tabView.SetFavicon(tab, favicon); // transfere a propriedade da imagem
+                }
             }
             catch (Exception ex) when (ex is ArgumentException or IOException or InvalidOperationException
                 or OperationCanceledException or OutOfMemoryException or System.Runtime.InteropServices.COMException)
@@ -1422,6 +1526,13 @@ public sealed class BrowserForm : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+
+        if (!_windowFullscreen && WindowState != FormWindowState.Minimized)
+        {
+            var desiredPadding = WindowState == FormWindowState.Maximized ? Padding.Empty : new Padding(ResizeBorder);
+            if (!Padding.Equals(desiredPadding)) Padding = desiredPadding;
+        }
+        _maximizeButton.RestoreIcon = WindowState == FormWindowState.Maximized;
 
         if (_core is null)
             return;

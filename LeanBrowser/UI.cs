@@ -520,6 +520,18 @@ public static class Native
     private static extern int DwmSetWindowAttribute(
         IntPtr hwnd, int attribute, ref int value, int size);
 
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    public static void BeginWindowDrag(IntPtr hwnd)
+    {
+        ReleaseCapture();
+        SendMessage(hwnd, 0x00A1, (IntPtr)2, IntPtr.Zero);
+    }
+
     public static void EnableRoundedCorners(IntPtr hwnd)
     {
         try
