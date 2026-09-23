@@ -306,6 +306,7 @@ public sealed class Omnibox : Panel
         Input.Font = new Font(Theme.UiFont, 10.5f);
         Input.ForeColor = Theme.Ink;
         Input.BackColor = Theme.Surface;
+        Input.PlaceholderText = "Pesquisar ou digitar endereço";
 
         _focusTimer.Tick += (_, _) => AdvanceFocusAnimation();
         _progressTimer.Tick += (_, _) => AdvanceNavigationProgress();
@@ -460,6 +461,7 @@ public sealed class ZoomBadge : Control
 {
     private int _opacity;
     private string _percentage = "100%";
+    private bool _hot;
 
     public ZoomBadge()
     {
@@ -467,8 +469,10 @@ public sealed class ZoomBadge : Control
         Size = new Size(82, 34);
         Visible = false;
         TabStop = false;
+        Cursor = Cursors.Hand;
+        AccessibleRole = AccessibleRole.PushButton;
         BackColor = Theme.Surface;
-        AccessibleName = "Zoom: 100%";
+        AccessibleName = "Zoom: 100%. Clique para redefinir para 100%";
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
             | ControlStyles.OptimizedDoubleBuffer, true);
     }
@@ -476,9 +480,12 @@ public sealed class ZoomBadge : Control
     public void ShowPercentage(double factor)
     {
         _percentage = Math.Round(factor * 100, MidpointRounding.AwayFromZero) + "%";
-        AccessibleName = "Zoom: " + _percentage;
+        AccessibleName = "Zoom: " + _percentage + ". Clique para redefinir para 100%";
         Opacity = 255;
     }
+
+    protected override void OnMouseEnter(EventArgs e) { _hot = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hot = false; Invalidate(); base.OnMouseLeave(e); }
 
     public int Opacity
     {
@@ -497,6 +504,12 @@ public sealed class ZoomBadge : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Theme.Surface);
         if (_opacity == 0) return;
+        if (_hot)
+        {
+            using var hotPath = Draw.RoundedRect(new Rectangle(1, 2, Width - 3, Height - 5), 9);
+            using var hotBrush = new SolidBrush(Theme.SurfaceHot);
+            g.FillPath(hotBrush, hotPath);
+        }
 
         using var pen = new Pen(Color.FromArgb(_opacity, Theme.InkMuted), 1.5f);
         g.DrawEllipse(pen, 7, 9, 11, 11);

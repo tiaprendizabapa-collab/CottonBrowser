@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -22,6 +23,10 @@ public sealed class BrowserForm : Form
     private readonly System.Windows.Forms.Timer _suggestionDebounce = new() { Interval = 300 };
     private CancellationTokenSource? _suggestionRequest;
     private int _suggestionVersion;
+    private SuggestionItem? _inlineSuggestion;
+    private string _typedQuery = string.Empty;
+    private bool _applyingInlineCompletion;
+    private bool _skipInlineCompletionOnce;
     private readonly System.Windows.Forms.Timer _zoomFade = new() { Interval = 40 };
     private long _zoomShownAt;
     private readonly BrowserTabControl _tabView = new() { Dock = DockStyle.Fill };
@@ -46,9 +51,20 @@ public sealed class BrowserForm : Form
     {
         ShowImageMargin = false,
         ShowCheckMargin = false,
+        AutoClose = true,
         AutoSize = true,
         Padding = new Padding(4)
     };
+    private readonly OverflowDismissFilter _overflowDismissFilter;
+    private readonly System.Windows.Forms.Timer _overflowOutsideClickTimer = new() { Interval = 15 };
+    private bool _overflowAwaitingRelease;
+    private readonly ToolTip _zoomTip = new();
+    private readonly BrowserUpdateService _updates = new();
+    private readonly CancellationTokenSource _updateLifetime = new();
+    private readonly System.Windows.Forms.Timer _updatePoll = new() { Interval = 3 * 60 * 60 * 1000 };
+    private readonly ToolStripMenuItem _updateItem = new("Verificar atualizações");
+    private BrowserUpdate? _availableUpdate;
+    private bool _updateBusy;
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
     private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
     private readonly AccessControl _access = new();
@@ -115,6 +131,16 @@ public sealed class BrowserForm : Form
         Activated += (_, _) => { if (_windowFullscreen) TopMost = true; };
         Deactivate += (_, _) => { if (_windowFullscreen) TopMost = false; };
 
+        _overflowDismissFilter = new OverflowDismissFilter(this);
+        Application.AddMessageFilter(_overflowDismissFilter);
+        _overflowMenu.Opened += (_, _) =>
+        {
+            _overflowAwaitingRelease = true;
+            _overflowOutsideClickTimer.Start();
+        };
+        _overflowMenu.Closed += (_, _) => _overflowOutsideClickTimer.Stop();
+        _overflowOutsideClickTimer.Tick += (_, _) => DismissOverflowOnOutsideClick();
+
         BuildToolbar();
         BuildMenus();
         _permissionPolicy.PromptCreated += OnPermissionPromptCreated;
@@ -146,8 +172,10 @@ public sealed class BrowserForm : Form
         Controls.Add(_suggestionPanel);
         _suggestionPanel.BringToFront();
         _suggestionPanel.Chosen += NavigateSuggestion;
+        _suggestionPanel.Dismissed += DismissSuggestion;
         _suggestionDebounce.Tick += OnSuggestionDebounce;
         _zoomFade.Tick += OnZoomFade;
+        _updatePoll.Tick += async (_, _) => await CheckForUpdatesAsync(manual: false);
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
@@ -219,6 +247,8 @@ public sealed class BrowserForm : Form
             else          _core?.Reload();
         };
         _omnibox.Favorite.Click += (_, _) => AddBookmark();
+        _omnibox.Zoom.Click += (_, _) => ChangeZoom(0);
+        _zoomTip.SetToolTip(_omnibox.Zoom, "Redefinir zoom para 100%");
 
         _back.Enabled = false;
         _forward.Enabled = false;
@@ -282,8 +312,9 @@ public sealed class BrowserForm : Form
 
     private void LayoutSuggestions()
     {
-        _suggestionPanel.Location = new Point(_toolbar.Left + _omnibox.Left, _toolbar.Bottom + 2);
-        _suggestionPanel.Width = Math.Min(_omnibox.Width, 700);
+        _suggestionPanel.Location = new Point(_toolbar.Left + _omnibox.Left,
+            _toolbar.Top + _omnibox.Bottom + 2);
+        _suggestionPanel.Width = _omnibox.Width;
     }
 
     private void LayoutTabBar()
@@ -322,7 +353,7 @@ public sealed class BrowserForm : Form
 
     private void BuildMenus()
     {
-        _tabView.NewTabRequested += async () => await OpenTabAsync(HomePage);
+        _tabView.NewTabRequested += async () => await OpenTabAsync(HomePage, focusOmnibox: true);
         _tabView.CloseRequested += tab =>
         {
             _tabs?.Close(tab);
@@ -361,6 +392,13 @@ public sealed class BrowserForm : Form
         profile.Click += (_, _) => OpenProfile();
         var downloads = new ToolStripMenuItem("Downloads");
         downloads.Click += (_, _) => OpenDownloads();
+        var resetZoom = new ToolStripMenuItem("Redefinir zoom (100%)");
+        resetZoom.Click += (_, _) => ChangeZoom(0);
+        _updateItem.Click += async (_, _) =>
+        {
+            var update = _availableUpdate ?? await CheckForUpdatesAsync(manual: true);
+            if (update is not null) await InstallUpdateAsync(update);
+        };
         var protection = new ToolStripMenuItem("Proteção");
         var protectionEnabled = new ToolStripMenuItem("Bloquear anúncios (Ctrl+Shift+A)");
         protectionEnabled.Click += async (_, _) => await ToggleProtectionAsync();
@@ -390,13 +428,15 @@ public sealed class BrowserForm : Form
                 _adProtection.Available ? "uBlock Origin Lite ativo" : "Somente bloqueio básico ativo";
         };
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings, protectionStatus });
-        _overflowMenu.Items.AddRange(new ToolStripItem[] { browserCenter, configuration, profile, downloads, protection });
+        _overflowMenu.Items.AddRange(new ToolStripItem[]
+            { browserCenter, configuration, profile, downloads, resetZoom, _updateItem, protection });
         _overflowMenu.Font = new Font(Theme.UiFont, 9.5f);
         _overflowMenu.BackColor = Theme.Surface;
         _overflowMenu.ForeColor = Theme.Ink;
         _overflowMenu.Renderer = new OverflowMenuRenderer();
         _tabView.SelectedIndexChanged += (_, _) =>
         {
+            _overflowMenu.Close();
             HideSuggestions();
             _zoomFade.Stop();
             _omnibox.Zoom.Opacity = 0;
@@ -426,10 +466,20 @@ public sealed class BrowserForm : Form
             var y = centerY + i * spacing;
             g.FillEllipse(dotBrush, centerX - radius, y - radius, radius * 2, radius * 2);
         }
+        if (_availableUpdate is not null)
+        {
+            using var updateBrush = new SolidBrush(Theme.Accent);
+            g.FillEllipse(updateBrush, _overflowButton.Width - 11, 3, 7, 7);
+        }
     }
 
     private void ShowOverflowMenu(Control anchor)
     {
+        if (_overflowMenu.Visible)
+        {
+            _overflowMenu.Close();
+            return;
+        }
         _overflowMenu.PerformLayout();
         var popupSize = _overflowMenu.GetPreferredSize(Size.Empty);
         var anchorPoint = anchor.PointToScreen(new Point(anchor.Width, anchor.Height + 1));
@@ -447,6 +497,32 @@ public sealed class BrowserForm : Form
         y = Math.Max(clientBounds.Top + 8, y);
 
         _overflowMenu.Show(new Point(x, y));
+    }
+
+    private void DismissOverflowOnOutsideClick()
+    {
+        if (!_overflowMenu.Visible) return;
+        if (Control.MouseButtons == MouseButtons.None)
+        {
+            _overflowAwaitingRelease = false;
+            return;
+        }
+        if (_overflowAwaitingRelease) return;
+        var point = Cursor.Position;
+        if (!IsInsideOverflowMenu(point)
+            && !_overflowButton.RectangleToScreen(_overflowButton.ClientRectangle).Contains(point))
+            _overflowMenu.Close(ToolStripDropDownCloseReason.AppClicked);
+    }
+
+    private bool IsInsideOverflowMenu(Point point) => IsInsideMenu(_overflowMenu, point);
+
+    private static bool IsInsideMenu(ToolStrip strip, Point point)
+    {
+        if (strip.Visible && strip.Bounds.Contains(point)) return true;
+        foreach (ToolStripMenuItem item in strip.Items.OfType<ToolStripMenuItem>())
+            if (item.HasDropDownItems && item.DropDown.Visible && IsInsideMenu(item.DropDown, point))
+                return true;
+        return false;
     }
 
     private void WithBookmarkErrors(Action action)
@@ -566,6 +642,25 @@ public sealed class BrowserForm : Form
         foreach (Control child in control.Controls) ApplyThemeRecursive(child);
     }
 
+    private sealed class OverflowDismissFilter(BrowserForm owner) : IMessageFilter
+    {
+        public bool PreFilterMessage(ref Message message)
+        {
+            if (!owner._overflowMenu.Visible
+                || message.Msg is not (0x0201 or 0x0204 or 0x0207 or 0x00A1))
+                return false;
+
+            var point = Cursor.Position;
+            if (owner.IsInsideOverflowMenu(point)
+                || owner._overflowButton.RectangleToScreen(owner._overflowButton.ClientRectangle).Contains(point))
+                return false;
+
+            owner._overflowMenu.Close(ToolStripDropDownCloseReason.AppClicked);
+            return false; // o clique continua para o controle de destino
+        }
+
+    }
+
     private sealed class OverflowMenuRenderer : ToolStripProfessionalRenderer
     {
         protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
@@ -604,10 +699,19 @@ public sealed class BrowserForm : Form
         catch { MessageBox.Show(this, "Não foi possível apagar as senhas."); }
     }
 
-    private async Task OpenTabAsync(string url)
+    private async Task OpenTabAsync(string url, bool focusOmnibox = false)
     {
         if (_tabs is null || IsDisposed) return;
-        try { await _tabs.CreateAsync(url); }
+        try
+        {
+            var opening = _tabs.CreateAsync(url);
+            if (focusOmnibox)
+            {
+                _omnibox.Input.Focus();
+                _omnibox.Input.SelectAll();
+            }
+            await opening;
+        }
         catch (Exception ex) { if (!IsDisposed) MessageBox.Show(this, "Não foi possível abrir a aba.\n" + ex.Message); }
     }
 
@@ -757,6 +861,115 @@ public sealed class BrowserForm : Form
     }
     // ----------------------------------------------------- Inicializacao ---
 
+    protected override async void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        try
+        {
+            await Task.Delay(1500, _updateLifetime.Token);
+            await CheckForUpdatesAsync(manual: false);
+            if (!IsDisposed) _updatePoll.Start();
+        }
+        catch (OperationCanceledException) { /* janela encerrada */ }
+    }
+
+    private async Task<BrowserUpdate?> CheckForUpdatesAsync(bool manual)
+    {
+        if (_updateBusy || IsDisposed) return null;
+        _updateBusy = true;
+        _updateItem.Enabled = false;
+        _updateItem.Text = "Verificando atualizações...";
+        try
+        {
+            var current = typeof(BrowserForm).Assembly.GetName().Version ?? new Version(1, 0, 0, 0);
+            var update = await _updates.CheckAsync(current, _updateLifetime.Token);
+            if (IsDisposed) return null;
+            _availableUpdate = update;
+            _updateItem.Text = update is null
+                ? "Verificar atualizações"
+                : $"Atualização disponível ({update.Tag})";
+            _overflowButton.Invalidate();
+            if (manual && update is null)
+                MessageBox.Show(this, "Nenhuma versão nova foi publicada para este navegador.",
+                    "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return update;
+        }
+        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            if (manual && !IsDisposed)
+                MessageBox.Show(this, "Não foi possível verificar as atualizações.\n\n" + ex.Message,
+                    "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return null;
+        }
+        finally
+        {
+            _updateBusy = false;
+            if (!IsDisposed)
+            {
+                _updateItem.Enabled = true;
+                if (_updateItem.Text == "Verificando atualizações...")
+                    _updateItem.Text = _availableUpdate is null
+                        ? "Verificar atualizações"
+                        : $"Atualização disponível ({_availableUpdate.Tag})";
+            }
+        }
+    }
+
+    private async Task InstallUpdateAsync(BrowserUpdate update)
+    {
+        if (_updateBusy || IsDisposed) return;
+        if (MessageBox.Show(this,
+            $"Instalar o CottonBrowser {update.Tag} agora? O navegador será fechado e reiniciado.",
+            "Atualização disponível", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        _updateBusy = true;
+        _updateItem.Enabled = false;
+        _updateItem.Text = "Baixando atualização...";
+        try
+        {
+            var progress = new Progress<int>(percent =>
+            {
+                if (!IsDisposed) _updateItem.Text = $"Baixando atualização... {percent}%";
+            });
+            var package = await _updates.DownloadAsync(update, progress, _updateLifetime.Token);
+            if (IsDisposed) return;
+
+            var start = new ProcessStartInfo(package.UpdaterPath)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = Path.GetDirectoryName(package.UpdaterPath)!
+            };
+            start.ArgumentList.Add(Environment.ProcessId.ToString());
+            start.ArgumentList.Add(package.ArchivePath);
+            start.ArgumentList.Add(AppContext.BaseDirectory);
+            start.ArgumentList.Add(update.Sha256);
+            if (Process.Start(start) is null)
+                throw new IOException("Não foi possível iniciar o instalador da atualização.");
+            Close();
+        }
+        catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (!IsDisposed)
+                MessageBox.Show(this, "Não foi possível baixar ou iniciar a atualização.\n\n" + ex.Message,
+                    "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _updateBusy = false;
+            if (!IsDisposed)
+            {
+                _updateItem.Enabled = true;
+                _updateItem.Text = $"Atualização disponível ({update.Tag})";
+            }
+        }
+    }
+
     protected override async void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
@@ -782,6 +995,13 @@ public sealed class BrowserForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _updateLifetime.Cancel();
+        _updatePoll.Dispose();
+        _updates.Dispose();
+        _updateLifetime.Dispose();
+        Application.RemoveMessageFilter(_overflowDismissFilter);
+        _overflowOutsideClickTimer.Dispose();
+        _zoomTip.Dispose();
         HideSuggestions();
         _suggestionDebounce.Dispose();
         _zoomFade.Dispose();
@@ -903,6 +1123,7 @@ public sealed class BrowserForm : Form
                     favicon.Dispose();
                 else
                 {
+                    _suggestionPanel.CacheFavicon(core.Source, favicon);
                     _bookmarksBar.RememberFavicon(core.Source, favicon);
                     _tabView.SetFavicon(tab, favicon); // transfere a propriedade da imagem
                 }
@@ -946,6 +1167,7 @@ public sealed class BrowserForm : Form
             }));
         };
         tab.Web.KeyDown += OnWebKeyDown;
+        tab.Web.MouseDown += (_, _) => _overflowMenu.Close();
         tab.Web.ZoomFactorChanged += (_, _) =>
         {
             if (_tabs?.Active == tab && !IsDisposed) ShowZoom(tab.Web.ZoomFactor);
@@ -1234,22 +1456,55 @@ public sealed class BrowserForm : Form
 
     private void OnOmniboxTextChanged(object? sender, EventArgs e)
     {
+        if (_applyingInlineCompletion) return;
         _omniboxDirty = _omnibox.Input.Focused;
         if (!_omniboxDirty) return;
 
+        var skipInline = _skipInlineCompletionOnce;
+        _skipInlineCompletionOnce = false;
         HideSuggestions();
         var query = _omnibox.Input.Text.Trim();
         if (query.Length == 0) return;
 
-        ShowSuggestions(_navigationHistory.Find(query));
+        _typedQuery = query;
+        if (!skipInline && _omnibox.Input.Text == query
+            && _omnibox.Input.SelectionStart == query.Length
+            && _omnibox.Input.SelectionLength == 0)
+        {
+            _inlineSuggestion = _navigationHistory.FindAddressCompletion(query);
+            if (_inlineSuggestion?.Url is { } url)
+            {
+                var display = UrlHelper.ForDisplay(url);
+                _applyingInlineCompletion = true;
+                try
+                {
+                    _omnibox.Input.Text = query + display[query.Length..];
+                    _omnibox.Input.SelectionStart = query.Length;
+                    _omnibox.Input.SelectionLength = display.Length - query.Length;
+                }
+                finally { _applyingInlineCompletion = false; }
+            }
+        }
+        ShowSuggestions(BuildSuggestions(query, Array.Empty<SuggestionItem>()));
         if (query.Length < 2 || query.Contains('/') || query.Contains(':')) return;
         _suggestionDebounce.Start();
+    }
+
+    private IReadOnlyList<SuggestionItem> BuildSuggestions(string query, IReadOnlyList<SuggestionItem> remote)
+    {
+        var history = _navigationHistory.Find(query);
+        var primary = _inlineSuggestion ?? history.FirstOrDefault(item => item.Url is not null
+            && UrlHelper.ForDisplay(item.Url).StartsWith(query, StringComparison.OrdinalIgnoreCase));
+        return (primary is null ? new[] { new SuggestionItem(query, null) } : new[] { primary })
+            .Concat(history).Concat(remote)
+            .DistinctBy(item => item.Url ?? item.Text, StringComparer.OrdinalIgnoreCase)
+            .Take(8).ToArray();
     }
 
     private async void OnSuggestionDebounce(object? sender, EventArgs e)
     {
         _suggestionDebounce.Stop();
-        var query = _omnibox.Input.Text.Trim();
+        var query = _typedQuery;
         var version = _suggestionVersion;
         var request = new CancellationTokenSource();
         _suggestionRequest = request;
@@ -1257,10 +1512,7 @@ public sealed class BrowserForm : Form
         {
             var remote = await _searchSuggestions.FetchAsync(query, request.Token);
             if (IsDisposed || !_omnibox.Input.Focused || version != _suggestionVersion) return;
-            var merged = _navigationHistory.Find(query).Concat(remote)
-                .DistinctBy(item => item.Url ?? item.Text, StringComparer.OrdinalIgnoreCase)
-                .Take(8).ToArray();
-            ShowSuggestions(merged);
+            ShowSuggestions(BuildSuggestions(query, remote));
         }
         finally
         {
@@ -1281,6 +1533,8 @@ public sealed class BrowserForm : Form
         _suggestionDebounce.Stop();
         _suggestionRequest?.Cancel();
         _suggestionRequest = null;
+        _inlineSuggestion = null;
+        _typedQuery = string.Empty;
         _suggestionPanel.SetItems(Array.Empty<SuggestionItem>());
     }
 
@@ -1290,6 +1544,22 @@ public sealed class BrowserForm : Form
         _omniboxDirty = false;
         _core?.Navigate(item.Url ?? UrlHelper.Normalize(item.Text));
         _web?.Focus();
+    }
+
+    private void DismissSuggestion(SuggestionItem item)
+    {
+        if (item.Url is null) return;
+        var query = _typedQuery;
+        _navigationHistory.Remove(item.Url);
+        _applyingInlineCompletion = true;
+        try
+        {
+            _omnibox.Input.Text = query;
+            _omnibox.Input.SelectionStart = query.Length;
+            _omnibox.Input.SelectionLength = 0;
+        }
+        finally { _applyingInlineCompletion = false; }
+        OnOmniboxTextChanged(_omnibox.Input, EventArgs.Empty);
     }
 
     private void ShowZoom(double factor)
@@ -1322,9 +1592,14 @@ public sealed class BrowserForm : Form
 
     private void OnOmniboxKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode is Keys.Back or Keys.Delete) _skipInlineCompletionOnce = true;
         if (e.KeyCode == Keys.Escape && _suggestionPanel.Visible)
         {
+            var query = _typedQuery;
             HideSuggestions();
+            _applyingInlineCompletion = true;
+            try { _omnibox.Input.Text = query; _omnibox.Input.SelectionStart = query.Length; }
+            finally { _applyingInlineCompletion = false; }
             e.Handled = true;
             e.SuppressKeyPress = true;
             return;
@@ -1343,7 +1618,7 @@ public sealed class BrowserForm : Form
         e.Handled = true;
 
         var selected = _suggestionPanel.SelectedItem;
-        var target = selected?.Url ?? UrlHelper.Normalize(selected?.Text ?? _omnibox.Input.Text);
+        var target = selected?.Url ?? UrlHelper.Normalize(selected?.Text ?? _typedQuery);
 
         HideSuggestions();
         _omniboxDirty = false;
@@ -1427,7 +1702,7 @@ public sealed class BrowserForm : Form
         switch (key)
         {
             case Keys.T when ctrl:
-                _ = OpenTabAsync(HomePage);
+                _ = OpenTabAsync(HomePage, focusOmnibox: true);
                 return true;
             case Keys.W when ctrl:
                 CloseTab();
