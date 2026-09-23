@@ -13,6 +13,15 @@ public sealed class BrowserForm : Form
     private readonly ToolButton _forward  = new("\uE72A", "Avancar");
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
     private readonly Omnibox    _omnibox  = new();
+    private readonly SuggestionPanel _suggestionPanel = new();
+    private readonly NavigationHistoryStore _navigationHistory = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "history.json"));
+    private readonly SearchSuggestionClient _searchSuggestions = new();
+    private readonly System.Windows.Forms.Timer _suggestionDebounce = new() { Interval = 300 };
+    private CancellationTokenSource? _suggestionRequest;
+    private int _suggestionVersion;
+    private readonly System.Windows.Forms.Timer _zoomFade = new() { Interval = 40 };
+    private long _zoomShownAt;
     private readonly BrowserTabControl _tabView = new() { Dock = DockStyle.Fill };
     private readonly Panel _tabBar = new() { Dock = DockStyle.Top, Height = 50, BackColor = Theme.Chrome };
     private readonly Button _overflowButton = new()
@@ -110,6 +119,11 @@ public sealed class BrowserForm : Form
         Controls.Add(_tabView);
         Controls.Add(_toolbar);
         Controls.Add(_tabBar);
+        Controls.Add(_suggestionPanel);
+        _suggestionPanel.BringToFront();
+        _suggestionPanel.Chosen += NavigateSuggestion;
+        _suggestionDebounce.Tick += OnSuggestionDebounce;
+        _zoomFade.Tick += OnZoomFade;
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
@@ -153,7 +167,7 @@ public sealed class BrowserForm : Form
         _forward.Enabled = false;
 
         _omnibox.Input.KeyDown += OnOmniboxKeyDown;
-        _omnibox.Input.TextChanged += (_, _) => _omniboxDirty = _omnibox.Input.Focused;
+        _omnibox.Input.TextChanged += OnOmniboxTextChanged;
         _omnibox.Input.GotFocus += (_, _) => _selectAllOnClick = true;
         _omnibox.Input.MouseUp += (_, _) =>
         {
@@ -165,7 +179,12 @@ public sealed class BrowserForm : Form
         _omnibox.Input.LostFocus += (_, _) =>
         {
             _omniboxDirty = false;
-            if (_core is not null) ShowUrl(_core.Source);
+            if (IsHandleCreated) BeginInvoke(new Action(() =>
+            {
+                if (IsDisposed || _omnibox.Input.Focused) return;
+                HideSuggestions();
+                if (_core is not null) ShowUrl(_core.Source);
+            }));
         };
 
         _toolbar.Controls.Add(_back);
@@ -174,6 +193,7 @@ public sealed class BrowserForm : Form
         _toolbar.Controls.Add(_omnibox);
 
         _toolbar.Resize += (_, _) => LayoutToolbar();
+        _toolbar.LocationChanged += (_, _) => LayoutSuggestions();
         LayoutToolbar();
     }
 
@@ -200,6 +220,13 @@ public sealed class BrowserForm : Form
 
         _omnibox.Location = new Point(x, (_toolbar.Height - 1 - _omnibox.Height) / 2);
         _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin);
+        LayoutSuggestions();
+    }
+
+    private void LayoutSuggestions()
+    {
+        _suggestionPanel.Location = new Point(_toolbar.Left + _omnibox.Left, _toolbar.Bottom + 2);
+        _suggestionPanel.Width = Math.Min(_omnibox.Width, 700);
     }
 
     private void LayoutTabBar()
@@ -287,7 +314,13 @@ public sealed class BrowserForm : Form
         _overflowMenu.BackColor = Theme.Surface;
         _overflowMenu.ForeColor = Theme.Ink;
         _overflowMenu.Renderer = new OverflowMenuRenderer();
-        _tabView.SelectedIndexChanged += (_, _) => RefreshActiveTab();
+        _tabView.SelectedIndexChanged += (_, _) =>
+        {
+            HideSuggestions();
+            _zoomFade.Stop();
+            _omnibox.Zoom.Opacity = 0;
+            RefreshActiveTab();
+        };
     }
 
     private void PaintOverflowButton(Graphics g)
@@ -399,6 +432,8 @@ public sealed class BrowserForm : Form
         _settingsTab?.ApplyTheme();
         _profileTab?.ApplyTheme();
         _downloadsTab?.ApplyTheme();
+        _suggestionPanel.Invalidate();
+        _omnibox.Zoom.Invalidate();
         foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
         {
             try { if (tab.Web.CoreWebView2 is { } core) core.Profile.PreferredColorScheme = Theme.IsDark
@@ -646,6 +681,10 @@ public sealed class BrowserForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        HideSuggestions();
+        _suggestionDebounce.Dispose();
+        _zoomFade.Dispose();
+        _searchSuggestions.Dispose();
         _foxyJumpscare?.Close();
         _telemetry.Dispose();
         _urlReputation.Dispose();
@@ -775,7 +814,10 @@ public sealed class BrowserForm : Form
         {
             tab.Loading = false;
             if (e.IsSuccess)
+            {
                 _telemetry.RecordNavigation(core.Source, core.DocumentTitle, _tabs?.Active == tab);
+                _navigationHistory.Record(core.Source, core.DocumentTitle);
+            }
             if (_tabs?.Active == tab) { SetLoading(false); RefreshActiveTab(resetEditing: false); }
         };
         core.SourceChanged += (_, _) =>
@@ -800,6 +842,10 @@ public sealed class BrowserForm : Form
             }));
         };
         tab.Web.KeyDown += OnWebKeyDown;
+        tab.Web.ZoomFactorChanged += (_, _) =>
+        {
+            if (_tabs?.Active == tab && !IsDisposed) ShowZoom(tab.Web.ZoomFactor);
+        };
         core.ContextMenuRequested += (_, e) => ReplaceOpenInNewWindowCommand(core, e);
         core.NewWindowRequested += (_, e) =>
         {
@@ -1082,16 +1128,120 @@ public sealed class BrowserForm : Form
 
     // ------------------------------------------------------- Navegacao -----
 
+    private void OnOmniboxTextChanged(object? sender, EventArgs e)
+    {
+        _omniboxDirty = _omnibox.Input.Focused;
+        if (!_omniboxDirty) return;
+
+        HideSuggestions();
+        var query = _omnibox.Input.Text.Trim();
+        if (query.Length == 0) return;
+
+        ShowSuggestions(_navigationHistory.Find(query));
+        if (query.Length < 2 || query.Contains('/') || query.Contains(':')) return;
+        _suggestionDebounce.Start();
+    }
+
+    private async void OnSuggestionDebounce(object? sender, EventArgs e)
+    {
+        _suggestionDebounce.Stop();
+        var query = _omnibox.Input.Text.Trim();
+        var version = _suggestionVersion;
+        var request = new CancellationTokenSource();
+        _suggestionRequest = request;
+        try
+        {
+            var remote = await _searchSuggestions.FetchAsync(query, request.Token);
+            if (IsDisposed || !_omnibox.Input.Focused || version != _suggestionVersion) return;
+            var merged = _navigationHistory.Find(query).Concat(remote)
+                .DistinctBy(item => item.Url ?? item.Text, StringComparer.OrdinalIgnoreCase)
+                .Take(8).ToArray();
+            ShowSuggestions(merged);
+        }
+        finally
+        {
+            if (ReferenceEquals(_suggestionRequest, request)) _suggestionRequest = null;
+            request.Dispose();
+        }
+    }
+
+    private void ShowSuggestions(IReadOnlyList<SuggestionItem> items)
+    {
+        _suggestionPanel.SetItems(items);
+        if (items.Count > 0) _suggestionPanel.BringToFront();
+    }
+
+    private void HideSuggestions()
+    {
+        _suggestionVersion++;
+        _suggestionDebounce.Stop();
+        _suggestionRequest?.Cancel();
+        _suggestionRequest = null;
+        _suggestionPanel.SetItems(Array.Empty<SuggestionItem>());
+    }
+
+    private void NavigateSuggestion(SuggestionItem item)
+    {
+        HideSuggestions();
+        _omniboxDirty = false;
+        _core?.Navigate(item.Url ?? UrlHelper.Normalize(item.Text));
+        _web?.Focus();
+    }
+
+    private void ShowZoom(double factor)
+    {
+        _omnibox.Zoom.ShowPercentage(factor);
+        _zoomShownAt = Environment.TickCount64;
+        _zoomFade.Stop();
+        _zoomFade.Start();
+    }
+
+    private void ChangeZoom(int direction)
+    {
+        if (_web is not { } web) return;
+        double[] levels = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+        var current = web.ZoomFactor;
+        var next = direction == 0 ? 1d : direction > 0
+            ? levels.FirstOrDefault(level => level > current + 0.001, levels[^1])
+            : levels.LastOrDefault(level => level < current - 0.001, levels[0]);
+        web.ZoomFactor = next;
+        ShowZoom(web.ZoomFactor);
+    }
+
+    private void OnZoomFade(object? sender, EventArgs e)
+    {
+        var elapsed = Environment.TickCount64 - _zoomShownAt;
+        if (elapsed < 2400) return;
+        _omnibox.Zoom.Opacity = (int)Math.Clamp((3000 - elapsed) * 255 / 600, 0, 255);
+        if (elapsed >= 3000) _zoomFade.Stop();
+    }
+
     private void OnOmniboxKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode == Keys.Escape && _suggestionPanel.Visible)
+        {
+            HideSuggestions();
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+        if (e.KeyCode is Keys.Down or Keys.Up && _suggestionPanel.Visible)
+        {
+            _suggestionPanel.MoveSelection(e.KeyCode == Keys.Down ? 1 : -1);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
         if (e.KeyCode != Keys.Enter)
             return;
 
         e.SuppressKeyPress = true; // mata o "ding" do Windows
         e.Handled = true;
 
-        var target = UrlHelper.Normalize(_omnibox.Input.Text);
+        var selected = _suggestionPanel.SelectedItem;
+        var target = selected?.Url ?? UrlHelper.Normalize(selected?.Text ?? _omnibox.Input.Text);
 
+        HideSuggestions();
         _omniboxDirty = false;
         _core?.Navigate(target);
         _web?.Focus();
@@ -1142,7 +1292,8 @@ public sealed class BrowserForm : Form
         var ctrl = e.Control;
         var shift = e.Shift;
         var alt = e.Alt;
-        var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D))
+        var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D
+            || (key == Keys.J && !shift && !alt) || key is Keys.Oemplus or Keys.Add or Keys.OemMinus or Keys.Subtract or Keys.D0 or Keys.NumPad0))
             || (ctrl && shift && key == Keys.A)
             || (alt && (key == Keys.D || key == Keys.Left || key == Keys.Right || key == Keys.Home))
             || key is Keys.F5 or Keys.F11
@@ -1182,6 +1333,18 @@ public sealed class BrowserForm : Form
                 return true;
             case Keys.D when ctrl:
                 AddBookmark();
+                return true;
+            case Keys.J when ctrl && !shift && !alt:
+                OpenDownloads();
+                return true;
+            case Keys.Oemplus or Keys.Add when ctrl:
+                ChangeZoom(1);
+                return true;
+            case Keys.OemMinus or Keys.Subtract when ctrl:
+                ChangeZoom(-1);
+                return true;
+            case Keys.D0 or Keys.NumPad0 when ctrl:
+                ChangeZoom(0);
                 return true;
             case Keys.L when ctrl:
             case Keys.D when alt:

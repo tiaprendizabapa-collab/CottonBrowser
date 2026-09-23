@@ -261,13 +261,11 @@ public sealed class Omnibox : Panel
 {
     public readonly TextBox Input = new();
     public readonly FavoriteButton Favorite = new();
+    public readonly ZoomBadge Zoom = new();
 
     private readonly Label _shield = new();
     private readonly Font _glyphFont = new(Theme.IconFont, 10f);
     private readonly Font _countFont = new(Theme.UiFont, 8.5f, FontStyle.Bold);
-
-    /// <summary>Fonte de sugestoes. Preencha com o historico, se quiser.</summary>
-    public readonly AutoCompleteStringCollection Suggestions = new();
 
     private bool _focused;
     private bool _hot;
@@ -308,11 +306,6 @@ public sealed class Omnibox : Panel
         Input.Font = new Font(Theme.UiFont, 10.5f);
         Input.ForeColor = Theme.Ink;
         Input.BackColor = Theme.Surface;
-        // CustomSource precisa existir antes de ligar o modo, senao o
-        // autocomplete dispara ArgumentException na primeira digitacao.
-        Input.AutoCompleteCustomSource = Suggestions;
-        Input.AutoCompleteSource = AutoCompleteSource.CustomSource;
-        Input.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
 
         _focusTimer.Tick += (_, _) => AdvanceFocusAnimation();
         _progressTimer.Tick += (_, _) => AdvanceNavigationProgress();
@@ -324,6 +317,7 @@ public sealed class Omnibox : Panel
 
         Controls.Add(Input);
         Controls.Add(_shield);
+        Controls.Add(Zoom);
         Controls.Add(Favorite);
 
         // Margem interna: o texto nunca encosta na curva.
@@ -458,6 +452,58 @@ public sealed class Omnibox : Panel
             _countFont.Dispose();
         }
         base.Dispose(disposing);
+    }
+}
+
+/// <summary>Indicador de zoom com opacidade desenhada, sem janela transparente.</summary>
+public sealed class ZoomBadge : Control
+{
+    private int _opacity;
+    private string _percentage = "100%";
+
+    public ZoomBadge()
+    {
+        Dock = DockStyle.Right;
+        Size = new Size(82, 34);
+        Visible = false;
+        TabStop = false;
+        BackColor = Theme.Surface;
+        AccessibleName = "Zoom: 100%";
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+            | ControlStyles.OptimizedDoubleBuffer, true);
+    }
+
+    public void ShowPercentage(double factor)
+    {
+        _percentage = Math.Round(factor * 100, MidpointRounding.AwayFromZero) + "%";
+        AccessibleName = "Zoom: " + _percentage;
+        Opacity = 255;
+    }
+
+    public int Opacity
+    {
+        get => _opacity;
+        set
+        {
+            _opacity = Math.Clamp(value, 0, 255);
+            Visible = _opacity > 0;
+            Invalidate();
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Theme.Surface);
+        if (_opacity == 0) return;
+
+        using var pen = new Pen(Color.FromArgb(_opacity, Theme.InkMuted), 1.5f);
+        g.DrawEllipse(pen, 7, 9, 11, 11);
+        g.DrawLine(pen, 17, 19, 22, 24);
+        using var textBrush = new SolidBrush(Color.FromArgb(_opacity, Theme.Ink));
+        using var format = new StringFormat { LineAlignment = StringAlignment.Center };
+        g.DrawString(_percentage, Font, textBrush, new RectangleF(25, 0, Width - 25, Height), format);
     }
 }
 
