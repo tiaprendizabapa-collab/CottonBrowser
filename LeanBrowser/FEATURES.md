@@ -21,6 +21,8 @@ Fechar a última aba encerra a janela. Links HTTP/HTTPS que solicitam uma nova j
 | Ctrl+W / × na guia | Fechar a aba selecionada pelo teclado ou a guia clicada |
 | Ctrl+Tab / Ctrl+Shift+Tab | Próxima / anterior |
 | Ctrl+D | Adicionar ou atualizar favorito da página |
+| Ctrl+J | Abrir o gestor de downloads |
+| Ctrl++ / Ctrl+- / Ctrl+0 | Aumentar, diminuir ou repor o zoom da aba |
 | Favoritos | Adicionar, remover a página atual ou abrir links salvos |
 | Apagar senhas salvas | Apagar todas as senhas do perfil, após confirmação |
 
@@ -29,6 +31,7 @@ Os atalhos existentes permanecem disponíveis. Ctrl+Shift+A afeta o bloqueador d
 ## Persistência
 
 - Favoritos: `%LOCALAPPDATA%\LeanBrowser\bookmarks.json`.
+- Histórico para sugestões da barra: `%LOCALAPPDATA%\LeanBrowser\history.json` (até 200 URLs).
 - Perfil WebView2, incluindo dados de login: `%LOCALAPPDATA%\LeanBrowser\WebView2`.
 
 O JSON aceita somente HTTP/HTTPS sem usuário/senha embutidos na URL. Usa substituição por arquivo temporário no mesmo diretório; falhas de leitura ou JSON inválido são informadas e não sobrescrevem os dados existentes. URLs iguais atualizam o título. A classe é destinada à thread da UI de uma instância do app; múltiplas instâncias escrevendo simultaneamente exigem mutex ou SQLite transacional. Títulos e URLs dos favoritos não são criptografados e podem conter informações sensíveis, incluindo parâmetros de consulta.
