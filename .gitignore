@@ -8,3 +8,4 @@
 **/.dotnet-*/
 **/.nuget-*/
 CottonInstaller/Payload.zip
+work/site-exceptions-build/

@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
+using MonitoringServer.Admin;
+using CottonBrowser.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -32,6 +34,8 @@ builder.Services.AddHttpLogging(options =>
 builder.Services.AddSignalR().AddJsonProtocol(options =>
     options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddSingleton<NavigationLogStore>();
+builder.Services.AddSingleton<SiteExceptionStore>();
+builder.Services.AddSingleton<PolicyDraftStore>();
 builder.Services.AddAuthentication("MonitoringBearer")
     .AddScheme<AuthenticationSchemeOptions, MonitoringBearerHandler>("MonitoringBearer", _ => { });
 builder.Services.AddAuthorization(options =>
@@ -46,10 +50,51 @@ var app = builder.Build();
 app.UseHttpLogging();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "cotton-monitoring" }));
-app.MapGet("/admin", () => Results.Redirect("/admin.html"));
+app.MapGet("/admin", () => Results.Redirect("/admin/index.html"));
+
+app.MapGet("/api/admin/policy-drafts", (string? scope, PolicyDraftStore store) =>
+{
+    var scopeKey = scope ?? "global";
+    return PolicyValidation.IsValidScope(scopeKey)
+        ? Results.Ok(store.Get(scopeKey))
+        : Results.BadRequest(new { error = "Escopo inválido." });
+}).RequireAuthorization("Admin");
+
+app.MapPut("/api/admin/policy-drafts", (string? scope, UpdatePolicyDraftRequest request,
+    PolicyDraftStore store) =>
+{
+    var scopeKey = scope ?? "global";
+    var errors = PolicyValidation.Validate(scopeKey, request);
+    if (errors.Count > 0) return Results.BadRequest(new { errors });
+
+    var outcome = store.Save(scopeKey, request, out var draft);
+    return outcome == PolicySaveOutcome.Conflict
+        ? Results.Conflict(new { error = "O rascunho foi alterado por outra sessão.", currentRevision = draft.Revision })
+        : Results.Ok(draft);
+}).RequireAuthorization("Admin");
+
+app.MapPost("/api/admin/site-exceptions/apply", (ApplySiteExceptionsRequest request,
+    PolicyDraftStore drafts) =>
+{
+    try
+    {
+        if (!drafts.TryApplySites(request.ExpectedRevision, out var snapshot))
+            return Results.Conflict(new { error = "O rascunho global mudou. Recarregue antes de ativar." });
+        return Results.Ok(new { appliedOrigins = snapshot!.AllowedOrigins.Length,
+            snapshot.AppliedAt, localOnly = true });
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+    {
+        return Results.Problem("Não foi possível aplicar as exceções locais. O rascunho foi preservado.", statusCode: 500);
+    }
+}).RequireAuthorization("Admin");
+
+app.MapGet("/api/admin/site-exceptions", (SiteExceptionStore siteExceptions) =>
+    Results.Ok(siteExceptions.Read())).RequireAuthorization("Admin");
 
 app.MapPost("/api/telemetry/navigation", async (
     IReadOnlyList<NavigationTelemetryEvent> events,

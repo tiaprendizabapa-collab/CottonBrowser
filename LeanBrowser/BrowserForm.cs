@@ -1,7 +1,9 @@
 using System.Drawing.Drawing2D;
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using CottonBrowser.Shared;
 
 namespace LeanBrowser;
 
@@ -62,8 +64,9 @@ public sealed class BrowserForm : Form
     private readonly BrowserUpdateService _updates = new();
     private readonly CancellationTokenSource _updateLifetime = new();
     private readonly System.Windows.Forms.Timer _updatePoll = new() { Interval = 3 * 60 * 60 * 1000 };
-    private readonly ToolStripMenuItem _updateItem = new("Verificar atualizações");
+    private readonly ToolStripMenuItem _updateItem = new("Atualizar CottonBrowser");
     private BrowserUpdate? _availableUpdate;
+    private Version? _offeredUpdateVersion;
     private bool _updateBusy;
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
     private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
@@ -72,6 +75,7 @@ public sealed class BrowserForm : Form
     private SettingsTab? _settingsTab;
     private ProfileTab? _profileTab;
     private readonly AdProtection _adProtection = new();
+    private readonly SiteAllowlist _siteAllowlist = new(new SiteExceptionStore());
     private readonly ISecretStore _secrets = new DpapiSecretStore();
     private readonly WebRiskReputationService _urlReputation;
     private readonly PermissionPolicy _permissionPolicy = new();
@@ -182,7 +186,8 @@ public sealed class BrowserForm : Form
         _suggestionPanel.Dismissed += DismissSuggestion;
         _suggestionDebounce.Tick += OnSuggestionDebounce;
         _zoomFade.Tick += OnZoomFade;
-        _updatePoll.Tick += async (_, _) => await CheckForUpdatesAsync(manual: false);
+        _updatePoll.Tick += async (_, _) =>
+            await OfferUpdateAsync(await CheckForUpdatesAsync(manual: false));
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
@@ -800,6 +805,36 @@ public sealed class BrowserForm : Form
         catch (Exception ex) { if (!IsDisposed) MessageBox.Show(this, "Não foi possível abrir a aba.\n" + ex.Message); }
     }
 
+    private async Task OpenAdminDashboardAsync()
+    {
+        // Advanced mode only controls discoverability; the server still requires its Admin token.
+        if (!_access.IsAdvancedMode || IsDisposed) return;
+        try
+        {
+            using var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(2),
+                MaxResponseContentBufferSize = 1024
+            };
+            using var response = await client.GetAsync(AdminDashboardEndpoint.HealthUrl);
+            response.EnsureSuccessStatusCode();
+            using var health = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (!health.RootElement.TryGetProperty("service", out var service) ||
+                service.GetString() != "cotton-monitoring")
+                throw new HttpRequestException("Serviço inesperado na porta do painel Admin.");
+            if (!IsDisposed) await OpenTabAsync(AdminDashboardEndpoint.DashboardUrl);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            if (!IsDisposed)
+                MessageBox.Show(this,
+                    "O painel Admin não está disponível neste computador.\n" +
+                    "Inicie o MonitoringServer em http://localhost:5270 e tente novamente.\n" +
+                    "O acesso ao painel ainda exige o token Admin.",
+                    "Administração", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
     private async Task<bool> OpenTabFromBridgeAsync(string url, bool isPrivate)
     {
         if (_tabs is null || IsDisposed) return false;
@@ -953,7 +988,7 @@ public sealed class BrowserForm : Form
         try
         {
             await Task.Delay(1500, _updateLifetime.Token);
-            await CheckForUpdatesAsync(manual: false);
+            await OfferUpdateAsync(await CheckForUpdatesAsync(manual: false));
             if (!IsDisposed) _updatePoll.Start();
         }
         catch (OperationCanceledException) { /* janela encerrada */ }
@@ -972,7 +1007,7 @@ public sealed class BrowserForm : Form
             if (IsDisposed) return null;
             _availableUpdate = update;
             _updateItem.Text = update is null
-                ? "Verificar atualizações"
+                ? "Atualizar CottonBrowser"
                 : $"Atualização disponível ({update.Tag})";
             _overflowButton.Invalidate();
             if (manual && update is null)
@@ -986,6 +1021,7 @@ public sealed class BrowserForm : Form
         }
         catch (Exception ex)
         {
+            _availableUpdate = null;
             if (manual && !IsDisposed)
                 MessageBox.Show(this, "Não foi possível verificar as atualizações.\n\n" + ex.Message,
                     "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -999,17 +1035,26 @@ public sealed class BrowserForm : Form
                 _updateItem.Enabled = true;
                 if (_updateItem.Text == "Verificando atualizações...")
                     _updateItem.Text = _availableUpdate is null
-                        ? "Verificar atualizações"
+                        ? "Atualizar CottonBrowser"
                         : $"Atualização disponível ({_availableUpdate.Tag})";
             }
         }
+    }
+
+    private async Task OfferUpdateAsync(BrowserUpdate? update)
+    {
+        if (update is null || IsDisposed || _offeredUpdateVersion == update.Version) return;
+        _offeredUpdateVersion = update.Version;
+        await InstallUpdateAsync(update);
     }
 
     private async Task InstallUpdateAsync(BrowserUpdate update)
     {
         if (_updateBusy || IsDisposed) return;
         if (MessageBox.Show(this,
-            $"Instalar o CottonBrowser {update.Tag} agora? O navegador será fechado e reiniciado.",
+            $"O CottonBrowser {update.Tag} está disponível. Deseja atualizar agora? " +
+            "O download acontece aqui no navegador; ele será fechado e reiniciado. " +
+            "Se escolher Não, poderá atualizar depois no menu ⋮ > Atualizar CottonBrowser.",
             "Atualização disponível", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
 
@@ -1116,13 +1161,14 @@ public sealed class BrowserForm : Form
 
         if (IsDisposed) return;
         _browserEnvironment = env;
-        _tabs = new BrowserTabManager(_tabView, env);
+        _tabs = new BrowserTabManager(_tabView, env, _siteAllowlist);
         _tabs.InitializeTabAsync = async tab =>
         {
             tab.NetworkProtection = new NetworkProtection(
                 tab.Web,
                 _urlReputation,
-                ConfirmInsecureNavigationAsync);
+                ConfirmInsecureNavigationAsync,
+                _siteAllowlist);
             tab.PermissionSubscription = _permissionPolicy.Attach(tab.Web);
             if (!tab.IsPrivate)
                 await _permissionPolicy.ResetPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
@@ -1816,6 +1862,7 @@ public sealed class BrowserForm : Form
         var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D
             || (key == Keys.J && !shift && !alt) || key is Keys.Oemplus or Keys.Add or Keys.OemMinus or Keys.Subtract or Keys.D0 or Keys.NumPad0))
             || (ctrl && shift && (key == Keys.A || key == Keys.N))
+            || (ctrl && shift && alt && _access.IsAdvancedMode && key == Keys.M)
             || (alt && (key == Keys.D || key == Keys.Left || key == Keys.Right || key == Keys.Home))
             || key is Keys.F5 or Keys.F11
             || (key == Keys.Escape && !ActivePageIsFullscreen() && (_browserFullscreen || _loading));
@@ -1843,6 +1890,9 @@ public sealed class BrowserForm : Form
     {
         switch (key)
         {
+            case Keys.M when ctrl && shift && alt && _access.IsAdvancedMode:
+                _ = OpenAdminDashboardAsync();
+                return true;
             case Keys.N when ctrl && shift:
                 _ = OpenNewTabAsync(isPrivate: true);
                 return true;

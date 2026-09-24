@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using CottonBrowser.Shared;
 
 namespace LeanBrowser;
 
@@ -11,6 +12,19 @@ public enum UrlReputationVerdict
     Allowed,
     Malicious,
     Unknown
+}
+
+internal static class AdminDashboardEndpoint
+{
+    public const string DashboardUrl = "http://localhost:5270/admin";
+    public const string HealthUrl = "http://localhost:5270/health";
+
+    // The local Admin server is intentionally HTTP on loopback only. It still
+    // requires the Admin bearer token for every privileged API request.
+    public static bool IsLocalOrigin(Uri uri) =>
+        uri.Scheme == Uri.UriSchemeHttp &&
+        uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) &&
+        uri.Port == 5270 && string.IsNullOrEmpty(uri.UserInfo);
 }
 
 public interface IUrlReputationService
@@ -138,6 +152,7 @@ public sealed class NetworkProtection : IDisposable
 
     private readonly CoreWebView2 _core;
     private readonly IUrlReputationService _reputation;
+    private readonly SiteAllowlist _siteAllowlist;
     private readonly Func<Uri, Task<bool>> _confirmInsecureNavigation;
     private readonly ConcurrentDictionary<string, byte> _approvedInsecureOrigins = new(StringComparer.OrdinalIgnoreCase);
     private long _navigationEpoch;
@@ -146,10 +161,12 @@ public sealed class NetworkProtection : IDisposable
     public NetworkProtection(
         WebView2 control,
         IUrlReputationService reputation,
-        Func<Uri, Task<bool>> confirmInsecureNavigation)
+        Func<Uri, Task<bool>> confirmInsecureNavigation,
+        SiteAllowlist siteAllowlist)
     {
         ArgumentNullException.ThrowIfNull(control);
         _reputation = reputation ?? throw new ArgumentNullException(nameof(reputation));
+        _siteAllowlist = siteAllowlist ?? throw new ArgumentNullException(nameof(siteAllowlist));
         _confirmInsecureNavigation = confirmInsecureNavigation ?? throw new ArgumentNullException(nameof(confirmInsecureNavigation));
         _core = control.CoreWebView2
             ?? throw new InvalidOperationException("CoreWebView2 must be initialized before attaching network protection.");
@@ -166,9 +183,12 @@ public sealed class NetworkProtection : IDisposable
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs args)
     {
+        _siteAllowlist.Refresh();
         var epoch = Interlocked.Increment(ref _navigationEpoch);
         if (Volatile.Read(ref _disposed) != 0
             || !TryGetInsecureOrigin(args.Uri, out var target)
+            || AdminDashboardEndpoint.IsLocalOrigin(target)
+            || _siteAllowlist.IsAllowed(target)
             || IsInsecureOriginApproved(target))
             return;
 
@@ -224,13 +244,15 @@ public sealed class NetworkProtection : IDisposable
             {
                 if (IsInsecureOriginApproved(target))
                     return;
-
-                if (!TryUpgradeToHttps(target, out target))
+                if (!AdminDashboardEndpoint.IsLocalOrigin(target) && !_siteAllowlist.IsAllowed(target))
                 {
-                    Block(args, BlockedPage, 403, "HTTPS required");
-                    return;
+                    if (!TryUpgradeToHttps(target, out target))
+                    {
+                        Block(args, BlockedPage, 403, "HTTPS required");
+                        return;
+                    }
+                    args.Request.Uri = target.AbsoluteUri;
                 }
-                args.Request.Uri = target.AbsoluteUri;
             }
 
             if (args.ResourceContext != CoreWebView2WebResourceContext.Document

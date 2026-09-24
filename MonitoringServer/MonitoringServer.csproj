@@ -10,4 +10,7 @@
     <Content Remove="dist\**" />
     <None Remove="dist\**" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\SiteExceptions.cs" Link="SiteExceptions.cs" />
+  </ItemGroup>
 </Project>

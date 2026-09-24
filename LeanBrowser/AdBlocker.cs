@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using Microsoft.Web.WebView2.Core;
+using CottonBrowser.Shared;
 
 namespace LeanBrowser;
 
@@ -34,7 +35,9 @@ public sealed class AdBlocker
     private const string EmbeddedResourceName = "LeanBrowser.Assets.blocklist.txt";
 
     private readonly List<string> _domains = new();
+    private readonly SiteAllowlist _siteAllowlist;
     private CoreWebView2? _core;
+    private bool _allowedPage;
 
     /// <summary>Total de requisicoes barradas desde o inicio do processo.</summary>
     public int TotalBlocked { get; private set; }
@@ -48,8 +51,9 @@ public sealed class AdBlocker
     /// <summary>Liga/desliga o bloqueio sem remover os filtros nativos.</summary>
     public bool Enabled { get; set; } = true;
 
-    public AdBlocker()
+    public AdBlocker(SiteAllowlist siteAllowlist)
     {
+        _siteAllowlist = siteAllowlist;
         LoadDomains();
     }
 
@@ -128,7 +132,14 @@ public sealed class AdBlocker
             TryAddFilter($"*://*.{domain}/*");
         }
 
+        core.NavigationStarting += OnNavigationStarting;
         core.WebResourceRequested += OnWebResourceRequested;
+    }
+
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs args)
+    {
+        _siteAllowlist.Refresh();
+        _allowedPage = _siteAllowlist.IsAllowed(args.Uri);
     }
 
     private void TryAddFilter(string pattern)
@@ -154,7 +165,8 @@ public sealed class AdBlocker
     /// </summary>
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
-        if (!Enabled || _core is null || !MatchesBlockedDomain(e.Request.Uri))
+        if (!Enabled || _core is null || _allowedPage ||
+            _siteAllowlist.IsAllowed(e.Request.Uri) || !MatchesBlockedDomain(e.Request.Uri))
             return; // Deixa seguir para a rede.
 
         // Resposta sintetica vazia. 403 + CORS liberado evita que scripts de

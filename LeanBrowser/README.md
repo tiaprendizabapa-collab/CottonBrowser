@@ -238,6 +238,28 @@ Consulte [FEATURES.md](FEATURES.md) para classes, integração, atalhos, persist
 
 ---
 
+## Atualização dentro do navegador
+
+O CottonBrowser instalado verifica uma nova versão ao iniciar e depois a cada
+3 horas. Quando há uma versão nova, pergunta se você quer instalar agora; se
+adiar, o menu de três pontos mostra **Atualização disponível** e permite
+instalar depois em **Atualizar CottonBrowser**. O download ocorre dentro do
+aplicativo, é conferido com o SHA-256 informado na Release e o navegador
+reinicia após substituir os arquivos. Não é preciso abrir o site do GitHub.
+
+Para o fluxo funcionar, publique uma Release **pública** com tag `vX.Y.Z`
+(`v1.0.1`, por exemplo) usando `.github/workflows/release.yml`. Ela precisa
+conter `CottonBrowser-win-x64.zip`; a versão da tag deve ser maior que a
+versão instalada. O GitHub é apenas a origem automática dos arquivos.
+Sem uma Release pública nova, o navegador não tem atualização para oferecer.
+O código local compilado não chega sozinho às instalações existentes.
+
+Antes de publicar, execute `dotnet run --project ..\BrowserUpdateChecks -c Release`
+para verificar o leitor da Release, o hash e o pacote. O fluxo rejeita URLs de
+download fora do repositório previsto, arquivos maiores que o limite e pacotes
+com hash incorreto. SHA-256 verifica integridade em relação ao metadado da
+Release; isto não substitui assinatura de código do Windows.
+
 ## Monitoramento corporativo/parental opcional
 
 O cliente agora registra navegação concluída, aba ativa e termos de pesquisa
@@ -263,8 +285,14 @@ $env:COTTON_ADMIN_TOKEN = "token-de-admin-longo-e-aleatorio"
 dotnet run --project ..\MonitoringServer
 ```
 
+Com o servidor ativo em `http://localhost:5270`, use `Ctrl+Shift+Alt+M` no
+navegador para abrir o Admin em uma nova aba. O atalho é discreto e só é
+interceptado no modo avançado; para entrar, ainda é obrigatório informar o
+token Admin configurado no servidor.
+
 Use HTTPS, tokens aleatórios e uma política de retenção compatível com a
 legislação e com o consentimento dos usuários monitorados. O RBAC do navegador
-continua ocultando recursos avançados para perfis sem role Admin; a API do
-servidor também valida a role no token, independentemente da interface.
+continua ocultando recursos avançados no modo padrão, mas isso é apenas uma
+conveniência visual. A API do servidor exige o token Admin independentemente
+da interface.
 
