@@ -1,5 +1,6 @@
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using CottonBrowser.Shared;
 
 namespace LeanBrowser;
 
@@ -7,7 +8,7 @@ public sealed class BrowserTab : TabPage
 {
     public bool IsPrivate { get; }
     public WebView2 Web { get; } = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Theme.Chrome };
-    public AdBlocker Blocker { get; } = new();
+    public AdBlocker Blocker { get; }
     public PopupPolicy Popups { get; } = new();
     public DocumentProtection DocumentProtection { get; } = new();
     public NetworkProtection? NetworkProtection { get; set; }
@@ -15,9 +16,10 @@ public sealed class BrowserTab : TabPage
     public bool Loading { get; set; }
     public bool FocusOmniboxOnFirstLoad { get; set; }
     public string? PendingNavigation { get; set; }
-    public BrowserTab(bool isPrivate = false) : base(isPrivate ? "Guia anônima" : "Nova aba")
+    public BrowserTab(SiteAllowlist siteAllowlist, bool isPrivate = false) : base(isPrivate ? "Guia anônima" : "Nova aba")
     {
         IsPrivate = isPrivate;
+        Blocker = new AdBlocker(siteAllowlist);
         Controls.Add(Web);
     }
 
@@ -32,7 +34,8 @@ public sealed class BrowserTab : TabPage
     }
 }
 
-public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Environment environment)
+public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Environment environment,
+    SiteAllowlist siteAllowlist)
 {
     public BrowserTab? Active => view.SelectedTab as BrowserTab;
     public Func<BrowserTab, Task>? InitializeTabAsync { get; set; }
@@ -40,7 +43,7 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
     public async Task<BrowserTab?> CreateAsync(string url, bool isPrivate = false,
         bool focusOmniboxOnFirstLoad = false)
     {
-        var tab = new BrowserTab(isPrivate)
+        var tab = new BrowserTab(siteAllowlist, isPrivate)
         {
             FocusOmniboxOnFirstLoad = focusOmniboxOnFirstLoad
         };

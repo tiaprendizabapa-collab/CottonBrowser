@@ -13,10 +13,18 @@ internal sealed class BrowserUpdateService : IDisposable
         "https://api.github.com/repos/tiaprendizabapa-collab/CottonBrowser/releases/latest";
     private const string AssetName = "CottonBrowser-win-x64.zip";
     private const long MaximumPackageBytes = 250L * 1024 * 1024;
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromMinutes(5) };
+    private const long MaximumUpdaterBytes = 100L * 1024 * 1024;
+    private readonly HttpClient _http;
+    private readonly bool _ownsHttp;
+    private readonly string _stagingRoot;
 
-    public BrowserUpdateService()
+    public BrowserUpdateService(HttpClient? httpClient = null, string? stagingRoot = null)
     {
+        _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        _ownsHttp = httpClient is null;
+        _stagingRoot = stagingRoot ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "LeanBrowser", "Updates");
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("CottonBrowser-Updater/1.0");
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
     }
@@ -27,7 +35,9 @@ internal sealed class BrowserUpdateService : IDisposable
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            throw new InvalidDataException(
+                "Não há uma Release pública do CottonBrowser disponível para atualização.");
         response.EnsureSuccessStatusCode();
 
         await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
@@ -70,9 +80,7 @@ internal sealed class BrowserUpdateService : IDisposable
     public async Task<StagedBrowserUpdate> DownloadAsync(
         BrowserUpdate update, IProgress<int>? progress, CancellationToken cancellationToken)
     {
-        var staging = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "LeanBrowser", "Updates", Guid.NewGuid().ToString("N"));
+        var staging = Path.Combine(_stagingRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
         var archivePath = Path.Combine(staging, AssetName);
         var updaterPath = Path.Combine(staging, "CottonUpdater.exe");
@@ -113,7 +121,7 @@ internal sealed class BrowserUpdateService : IDisposable
 
             using var archive = ZipFile.OpenRead(archivePath);
             var updater = archive.GetEntry("CottonUpdater.exe");
-            if (updater is null || updater.Length is <= 0 or > 20_000_000)
+            if (updater is null || updater.Length <= 0 || updater.Length > MaximumUpdaterBytes)
                 throw new InvalidDataException("O pacote não contém um atualizador válido.");
             await using (var source = updater.Open())
             await using (var destination = new FileStream(updaterPath, FileMode.CreateNew,
@@ -124,10 +132,19 @@ internal sealed class BrowserUpdateService : IDisposable
         }
         catch
         {
-            try { Directory.Delete(staging, recursive: true); } catch { /* arquivo em uso */ }
+            try
+            {
+                if (File.Exists(updaterPath)) File.Delete(updaterPath);
+                if (File.Exists(archivePath)) File.Delete(archivePath);
+                Directory.Delete(staging);
+            }
+            catch { /* arquivo em uso; mantém o staging para diagnóstico */ }
             throw;
         }
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        if (_ownsHttp) _http.Dispose();
+    }
 }

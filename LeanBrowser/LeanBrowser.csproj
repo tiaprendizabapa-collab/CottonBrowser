@@ -61,6 +61,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Shared\SiteExceptions.cs" Link="SiteExceptions.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Assets\blocklist.txt" />
     <EmbeddedResource Include="Assets\uBOLite_2026.914.1325.edge.zip" />
     <EmbeddedResource Include="Assets\Recovery\*.js" />

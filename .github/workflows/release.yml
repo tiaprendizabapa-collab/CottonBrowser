@@ -17,6 +17,10 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Verificar fluxo de atualização
+        shell: pwsh
+        run: dotnet run --project BrowserUpdateChecks -c Release
+
       - name: Compilar e empacotar
         shell: pwsh
         run: |

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; object-src 'none'">
+  <title>CottonBrowser · Administração</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">C</span><span>CottonBrowser<small>ADMINISTRAÇÃO</small></span></a>
+      <nav>
+        <p class="nav-heading">Painel</p>
+        <a class="nav-link" href="#overview" data-page="overview">Visão geral</a>
+        <a class="nav-link" href="#security" data-page="security">Controle de segurança</a>
+        <a class="nav-link" href="/admin.html">Monitoramento atual ↗</a>
+        <p class="nav-heading">Próximos módulos</p>
+        <span class="nav-disabled">Dispositivos <small>em breve</small></span>
+        <span class="nav-disabled">Pessoas e SSO <small>em breve</small></span>
+        <span class="nav-disabled">Experiência e marca <small>em breve</small></span>
+        <span class="nav-disabled">Auditoria <small>em breve</small></span>
+      </nav>
+      <p class="sidebar-foot">Protótipo de administração<br>Políticas ainda não aplicadas</p>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-title"><span class="eyebrow">COTTONBROWSER / ADMIN</span><span id="page-title">Visão geral</span></div>
+        <div class="topbar-actions">
+          <label for="scope-picker" class="sr-only">Escopo da política</label>
+          <select id="scope-picker" disabled>
+            <option value="global">Toda a empresa</option>
+            <option value="department:ti">Departamento · TI</option>
+            <option value="department:marketing">Departamento · Marketing</option>
+            <option value="department:financeiro">Departamento · Financeiro</option>
+          </select>
+          <span id="connection-mode" class="connection-mode">Desconectado</span>
+          <button id="disconnect" type="button" class="button subtle" hidden>Sair</button>
+        </div>
+      </header>
+      <main id="content" class="content" tabindex="-1"></main>
+    </div>
+  </div>
+</body>
+</html>
