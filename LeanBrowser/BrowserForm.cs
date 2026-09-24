@@ -107,6 +107,10 @@ public sealed class BrowserForm : Form
     private FormWindowState _restoreWindowState;
     private Rectangle _restoreBounds;
     private bool _restoreTopMost;
+    private bool _screenFitPending;
+    private bool _movingWindow;
+    private string? _lastScreenName;
+    private Rectangle _lastScreenWorkArea;
 
     public BrowserForm()
     {
@@ -123,7 +127,9 @@ public sealed class BrowserForm : Form
         FormBorderStyle = FormBorderStyle.None;
         Padding = new Padding(6);
         BackColor = Theme.Chrome;
-        ClientSize = new Size(1200, 780);
+        var initialArea = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1200, 780);
+        ClientSize = new Size(Math.Min(1200, Math.Max(560, initialArea.Width - 32)),
+            Math.Min(780, Math.Max(360, initialArea.Height - 32)));
         MinimumSize = new Size(560, 360);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font(Theme.UiFont, 9f);
@@ -202,6 +208,14 @@ public sealed class BrowserForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        const int wmGetMinMaxInfo = 0x0024;
+        const int wmDisplayChange = 0x007E;
+        const int wmWindowPosChanged = 0x0047;
+        const int wmEnterSizeMove = 0x0231;
+        const int wmExitSizeMove = 0x0232;
+        const int wmDpiChanged = 0x02E0;
+
+        if (message.Msg == wmEnterSizeMove) _movingWindow = true;
         if (message.Msg == 0x0084 && !_windowFullscreen && WindowState == FormWindowState.Normal)
         {
             var packed = message.LParam.ToInt64();
@@ -218,6 +232,61 @@ public sealed class BrowserForm : Form
             if (hit != 0) { message.Result = (IntPtr)hit; return; }
         }
         base.WndProc(ref message);
+        if (message.Msg == wmGetMinMaxInfo)
+            Native.SetMaximizedWorkArea(message.HWnd, message.LParam);
+        else if (message.Msg == wmWindowPosChanged && IsHandleCreated && !IsDisposed && !Disposing)
+        {
+            var screen = Screen.FromHandle(Handle);
+            var changed = _lastScreenName != screen.DeviceName ||
+                _lastScreenWorkArea != screen.WorkingArea;
+            _lastScreenName = screen.DeviceName;
+            _lastScreenWorkArea = screen.WorkingArea;
+            if (!_movingWindow && (changed || _windowFullscreen || WindowState == FormWindowState.Maximized))
+                ScheduleScreenFit();
+        }
+        else if (message.Msg is wmDisplayChange or wmExitSizeMove or wmDpiChanged)
+        {
+            if (message.Msg == wmExitSizeMove) _movingWindow = false;
+            ScheduleScreenFit();
+        }
+    }
+
+    private void ScheduleScreenFit()
+    {
+        if (_screenFitPending || !IsHandleCreated || IsDisposed || Disposing) return;
+        _screenFitPending = true;
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                _screenFitPending = false;
+                if (IsDisposed || Disposing || WindowState == FormWindowState.Minimized) return;
+                FitToCurrentScreen();
+            }));
+        }
+        catch (InvalidOperationException) { _screenFitPending = false; }
+    }
+
+    private void FitToCurrentScreen()
+    {
+        var screen = Screen.FromHandle(Handle);
+        var area = _windowFullscreen ? screen.Bounds : screen.WorkingArea;
+        if (_windowFullscreen || WindowState == FormWindowState.Maximized)
+        {
+            var current = Bounds;
+            if (Math.Abs(current.Left - area.Left) > 8 || Math.Abs(current.Top - area.Top) > 8 ||
+                Math.Abs(current.Width - area.Width) > 8 || Math.Abs(current.Height - area.Height) > 8)
+                Native.FitWindowToArea(Handle, area);
+        }
+        else if (WindowState == FormWindowState.Normal)
+        {
+            var fitted = WindowLayout.FitNormal(Bounds, area);
+            if (Bounds != fitted) Bounds = fitted;
+        }
+        PerformLayout();
+        _tabView.PerformLayout();
+        LayoutTabBar();
+        LayoutToolbar();
     }
 
     // ---------------------------------------------------------------- UI ---
@@ -345,11 +414,7 @@ public sealed class BrowserForm : Form
         if (_windowFullscreen) return;
         if (WindowState == FormWindowState.Maximized)
             WindowState = FormWindowState.Normal;
-        else
-        {
-            MaximizedBounds = Screen.FromControl(this).WorkingArea;
-            WindowState = FormWindowState.Maximized;
-        }
+        else WindowState = FormWindowState.Maximized;
     }
 
     private void BuildMenus()
@@ -884,6 +949,7 @@ public sealed class BrowserForm : Form
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        ScheduleScreenFit();
         try
         {
             await Task.Delay(1500, _updateLifetime.Token);
@@ -1887,6 +1953,8 @@ public sealed class BrowserForm : Form
             if (!Padding.Equals(desiredPadding)) Padding = desiredPadding;
         }
         _maximizeButton.RestoreIcon = WindowState == FormWindowState.Maximized;
+        if (WindowState != FormWindowState.Minimized && !_movingWindow)
+            ScheduleScreenFit();
 
         if (_core is null)
             return;
