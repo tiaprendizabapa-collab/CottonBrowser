@@ -38,7 +38,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/4] Publicando ^(single-file, framework-dependent, ReadyToRun^)...
+echo [2/4] Publicando ^(single-file, self-contained, ReadyToRun^)...
 "%DOTNET%" publish -c Release -r win-x64 -o .\dist
 if errorlevel 1 (
     echo.

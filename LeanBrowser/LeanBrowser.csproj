@@ -46,11 +46,11 @@
     <AutoreleasePoolSupport>false</AutoreleasePoolSupport>
   </PropertyGroup>
 
-  <!-- Publicacao: single-file, framework-dependent (reaproveita o runtime .NET
-       ja instalado, em vez de duplicar ~70 MB por app). -->
+  <!-- Publicacao de Release: single-file com runtime .NET incluido. -->
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>false</SelfContained>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SelfContained>true</SelfContained>
     <PublishReadyToRun>true</PublishReadyToRun>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>

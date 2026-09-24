@@ -45,8 +45,8 @@ dotnet publish -c Release -r win-x64 -o .\dist
 
 Para iterar durante o desenvolvimento: `dotnet run`.
 
-O binário final fica em `dist\CottonBrowser.exe` (~2 MB, *framework-dependent*:
-reaproveita o .NET já instalado em vez de duplicar ~70 MB de runtime por app).
+O binário de Release fica em `dist\CottonBrowser.exe` e inclui o runtime .NET 8.
+O WebView2 Runtime ainda precisa estar disponível no Windows.
 
 ---
 
