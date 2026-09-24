@@ -7,3 +7,4 @@
 **/monitoring-publish/
 **/.dotnet-*/
 **/.nuget-*/
+CottonInstaller/Payload.zip

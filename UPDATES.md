@@ -1,5 +1,21 @@
 # Atualizações do CottonBrowser
 
+## Instalação no menu Iniciar
+
+Execute `build-installer.cmd` na pasta principal para gerar
+`CottonInstaller/dist/CottonBrowserSetup.exe`. Ao abrir esse instalador e clicar
+em **Instalar**, o navegador é copiado para
+`%LOCALAPPDATA%\Programs\CottonBrowser` e registrado no menu Iniciar e em
+**Aplicativos instalados** do Windows, sem exigir permissões de administrador.
+O atalho aparece em **Todos os aplicativos** e na pesquisa do Iniciar. Para
+colocá-lo em **Fixado**, procure por CottonBrowser, clique com o botão direito
+e escolha **Fixar em Iniciar**.
+
+O instalador preserva o perfil de navegação em AppData. O pacote de atualização
+continua sendo `CottonBrowser-win-x64.zip`; a Release também oferece
+`CottonBrowserSetup.exe` para novas instalações. Ambos são gerados pelo mesmo
+script. O navegador e o atualizador requerem .NET 8 Desktop Runtime e WebView2.
+
 O navegador verifica em segundo plano a última Release estável do repositório
 `tiaprendizabapa-collab/CottonBrowser` ao abrir e a cada três horas. Uma nova
 versão aparece no menu de três pontos, com um ponto colorido no botão. Também é
@@ -19,7 +35,7 @@ preferências ficam em AppData e não são substituídos.
 2. Crie e envie uma tag dessa versão: `git tag v1.0.1` e
    `git push origin v1.0.1`.
 3. O workflow de GitHub Actions compila o navegador e o atualizador, cria
-   `CottonBrowser-win-x64.zip` e publica a Release. O navegador só verá a
+   `CottonBrowser-win-x64.zip` e `CottonBrowserSetup.exe` e publica a Release. O navegador só verá a
    atualização depois que o pacote estiver publicado.
 
 As próximas versões seguem o mesmo formato de tag, por exemplo `v1.1.0`.

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using Microsoft.Win32;
 
 namespace CottonUpdater;
 
@@ -86,6 +87,8 @@ internal static class Program
                 throw;
             }
 
+            RefreshInstalledVersion(target);
+
             try
             {
                 Process.Start(new ProcessStartInfo(Path.Combine(target, "CottonBrowser.exe"))
@@ -107,6 +110,29 @@ internal static class Program
                 "foram preservados quando possível.\n\n" + ex.Message,
                 "CottonBrowser", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private static void RefreshInstalledVersion(string target)
+    {
+        var installed = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs", "CottonBrowser");
+        if (!Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar)
+            .Equals(Path.GetFullPath(installed).TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase)) return;
+
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Uninstall\CottonBrowser", writable: true);
+            if (key?.GetValue("InstallLocation") is not string location ||
+                !Path.GetFullPath(location).TrimEnd(Path.DirectorySeparatorChar)
+                    .Equals(Path.GetFullPath(installed).TrimEnd(Path.DirectorySeparatorChar),
+                        StringComparison.OrdinalIgnoreCase)) return;
+            var version = FileVersionInfo.GetVersionInfo(Path.Combine(target, "CottonBrowser.exe"));
+            if (!string.IsNullOrWhiteSpace(version.FileVersion)) key.SetValue("DisplayVersion", version.FileVersion);
+        }
+        catch { /* Uma falha no registro não invalida a atualização instalada. */ }
     }
 
     private static List<string> ExtractPackage(string archivePath, string destination)
