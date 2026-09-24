@@ -520,9 +520,12 @@ public sealed class ZoomBadge : Control
     }
 }
 
-/// <summary>Interop minimo para cantos arredondados nativos no Windows 11.</summary>
+/// <summary>Interop para janela sem moldura, monitores e efeitos nativos.</summary>
 public static class Native
 {
+    private const uint MonitorDefaultToNearest = 2;
+    private const uint SetWindowNoZOrder = 0x0004;
+    private const uint SetWindowNoActivate = 0x0010;
     private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     private const int DWMWCP_ROUND = 2;
     private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
@@ -538,6 +541,69 @@ public static class Native
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public NativeRect Monitor;
+        public NativeRect Work;
+        public int Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public NativePoint Reserved;
+        public NativePoint MaxSize;
+        public NativePoint MaxPosition;
+        public NativePoint MinTrackSize;
+        public NativePoint MaxTrackSize;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter,
+        int x, int y, int width, int height, uint flags);
+
+    public static void SetMaximizedWorkArea(IntPtr hwnd, IntPtr minMaxInfo)
+    {
+        if (minMaxInfo == IntPtr.Zero) return;
+        var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return;
+
+        var limits = Marshal.PtrToStructure<MinMaxInfo>(minMaxInfo);
+        var bounds = WindowLayout.MaximizedBounds(
+            Rectangle.FromLTRB(info.Monitor.Left, info.Monitor.Top, info.Monitor.Right, info.Monitor.Bottom),
+            Rectangle.FromLTRB(info.Work.Left, info.Work.Top, info.Work.Right, info.Work.Bottom));
+        limits.MaxPosition = new NativePoint
+        {
+            X = bounds.X,
+            Y = bounds.Y
+        };
+        limits.MaxSize = new NativePoint
+        {
+            X = bounds.Width,
+            Y = bounds.Height
+        };
+        Marshal.StructureToPtr(limits, minMaxInfo, false);
+    }
+
+    public static void FitWindowToArea(IntPtr hwnd, Rectangle area) =>
+        SetWindowPos(hwnd, IntPtr.Zero, area.X, area.Y, area.Width, area.Height,
+            SetWindowNoZOrder | SetWindowNoActivate);
 
     public static void BeginWindowDrag(IntPtr hwnd)
     {
