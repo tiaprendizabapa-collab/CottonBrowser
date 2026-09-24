@@ -5,6 +5,7 @@ namespace LeanBrowser;
 
 public sealed class BrowserTab : TabPage
 {
+    public bool IsPrivate { get; }
     public WebView2 Web { get; } = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Theme.Chrome };
     public AdBlocker Blocker { get; } = new();
     public PopupPolicy Popups { get; } = new();
@@ -12,7 +13,13 @@ public sealed class BrowserTab : TabPage
     public NetworkProtection? NetworkProtection { get; set; }
     public IDisposable? PermissionSubscription { get; set; }
     public bool Loading { get; set; }
-    public BrowserTab() : base("Nova aba") => Controls.Add(Web);
+    public bool FocusOmniboxOnFirstLoad { get; set; }
+    public string? PendingNavigation { get; set; }
+    public BrowserTab(bool isPrivate = false) : base(isPrivate ? "Guia anônima" : "Nova aba")
+    {
+        IsPrivate = isPrivate;
+        Controls.Add(Web);
+    }
 
     protected override void Dispose(bool disposing)
     {
@@ -30,19 +37,33 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
     public BrowserTab? Active => view.SelectedTab as BrowserTab;
     public Func<BrowserTab, Task>? InitializeTabAsync { get; set; }
 
-    public async Task<BrowserTab?> CreateAsync(string url)
+    public async Task<BrowserTab?> CreateAsync(string url, bool isPrivate = false,
+        bool focusOmniboxOnFirstLoad = false)
     {
-        var tab = new BrowserTab();
+        var tab = new BrowserTab(isPrivate)
+        {
+            FocusOmniboxOnFirstLoad = focusOmniboxOnFirstLoad
+        };
         view.TabPages.Insert(view.BrowserTabCount, tab);
         view.SelectedTab = tab;
         try
         {
-            await tab.Web.EnsureCoreWebView2Async(environment);
+            if (isPrivate)
+            {
+                var options = environment.CreateCoreWebView2ControllerOptions();
+                options.ProfileName = "CottonBrowserPrivate";
+                options.IsInPrivateModeEnabled = true;
+                await tab.Web.EnsureCoreWebView2Async(environment, options);
+                if (!tab.Web.CoreWebView2.Profile.IsInPrivateModeEnabled)
+                    throw new InvalidOperationException("O modo InPrivate não foi ativado pelo WebView2.");
+            }
+            else
+                await tab.Web.EnsureCoreWebView2Async(environment);
             if (tab.IsDisposed || view.IsDisposed) return null;
             WebContentIsolation.ConfigureUntrustedTab(tab.Web);
             if (InitializeTabAsync is not null) await InitializeTabAsync(tab);
             if (tab.IsDisposed || view.IsDisposed) return null;
-            tab.Web.CoreWebView2.Navigate(url);
+            tab.Web.CoreWebView2.Navigate(tab.PendingNavigation ?? url);
             return tab;
         }
         catch

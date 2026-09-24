@@ -14,6 +14,7 @@ public static class TrustedBrowserBridge
     public const string HostName = "app.cottonbrowser.test";
     public const string UiUrl = "https://app.cottonbrowser.test/index.html";
     public const string NewTabUrl = "https://app.cottonbrowser.test/newtab.html";
+    public const string PrivateTabUrl = "https://app.cottonbrowser.test/private.html";
     private const int ProtocolVersion = 1;
     private const int MaxMessageLength = 4 * 1024;
     private const int MaxUrlLength = 2 * 1024;

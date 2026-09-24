@@ -133,6 +133,8 @@ public sealed class BrowserTabControl : TabControl
     protected override void OnSelectedIndexChanged(EventArgs e)
     {
         base.OnSelectedIndexChanged(e);
+        _toolTip.SetToolTip(_newTabButton, SelectedTab is BrowserTab { IsPrivate: true }
+            ? "Nova guia anônima (Ctrl+T)" : "Nova aba (Ctrl+T)");
         foreach (var header in _headers.Values) header.Invalidate();
         if (SelectedTab is { } tab && _headers.TryGetValue(tab, out var selected))
             HeaderStrip.ScrollControlIntoView(TabPages.IndexOf(tab) == TabCount - 1 ? _newTabButton : selected);
