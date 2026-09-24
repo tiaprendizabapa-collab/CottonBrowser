@@ -14,7 +14,8 @@ e escolha **Fixar em Iniciar**.
 O instalador preserva o perfil de navegação em AppData. O pacote de atualização
 continua sendo `CottonBrowser-win-x64.zip`; a Release também oferece
 `CottonBrowserSetup.exe` para novas instalações. Ambos são gerados pelo mesmo
-script. O navegador e o atualizador requerem .NET 8 Desktop Runtime e WebView2.
+script. O instalador, o navegador e o atualizador incluem o runtime .NET 8;
+o WebView2 Runtime ainda precisa estar disponível no Windows.
 
 O navegador verifica em segundo plano a última Release estável do repositório
 `tiaprendizabapa-collab/CottonBrowser` ao abrir e a cada três horas. Uma nova
@@ -41,6 +42,6 @@ preferências ficam em AppData e não são substituídos.
 As próximas versões seguem o mesmo formato de tag, por exemplo `v1.1.0`.
 Commits ou PRs, sozinhos, não são distribuídos automaticamente. A primeira
 instalação desta funcionalidade precisa ser feita manualmente; versões antigas
-não possuem o código para consultar a API. O pacote requer .NET 8 Desktop
-Runtime e WebView2 Runtime no Windows x64. Instalações em pastas sem permissão
+não possuem o código para consultar a API. O pacote requer WebView2 Runtime
+no Windows x64. Instalações em pastas sem permissão
 de escrita, como `Program Files`, precisam de um instalador com elevação.

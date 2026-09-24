@@ -16,10 +16,10 @@ $output = Join-Path $installerRoot 'dist'
 try {
     New-Item -ItemType Directory -Path (Join-Path $package 'Assets\Bridge') -Force | Out-Null
 
-    & dotnet publish (Join-Path $projectRoot 'LeanBrowser\LeanBrowser.csproj') -c Release -r win-x64 --self-contained false -o $app "-p:Version=$Version"
+    & dotnet publish (Join-Path $projectRoot 'LeanBrowser\LeanBrowser.csproj') -c Release -r win-x64 --self-contained true -o $app "-p:Version=$Version"
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar o navegador.' }
 
-    & dotnet publish (Join-Path $projectRoot 'CottonUpdater\CottonUpdater.csproj') -c Release -r win-x64 --self-contained false -o $updater "-p:Version=$Version"
+    & dotnet publish (Join-Path $projectRoot 'CottonUpdater\CottonUpdater.csproj') -c Release -r win-x64 --self-contained true -o $updater "-p:Version=$Version"
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar o atualizador.' }
 
     Copy-Item (Join-Path $app 'CottonBrowser.exe') $package
@@ -32,7 +32,7 @@ try {
     New-Item -ItemType Directory -Path $output -Force | Out-Null
     Copy-Item $payload (Join-Path $output 'CottonBrowser-win-x64.zip') -Force
 
-    & dotnet publish (Join-Path $installerRoot 'CottonInstaller.csproj') -c Release -r win-x64 --self-contained false -o $output "-p:Version=$Version"
+    & dotnet publish (Join-Path $installerRoot 'CottonInstaller.csproj') -c Release -r win-x64 --self-contained true -o $output "-p:Version=$Version"
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar o instalador.' }
 
     Write-Host "Instalador: $(Join-Path $output 'CottonBrowserSetup.exe')"
