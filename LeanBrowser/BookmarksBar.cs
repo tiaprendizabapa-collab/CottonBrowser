@@ -10,6 +10,7 @@ internal sealed class BookmarksBar : Panel
     private readonly Queue<string> _faviconOrder = new();
     private readonly ToolTip _toolTip = new();
     private readonly ContextMenuStrip _overflowMenu = new() { ShowImageMargin = false };
+    private bool _bookmarkItemsVisible;
     private readonly Button _more = new()
     {
         Text = "»", AccessibleName = "Mais favoritos", Size = new Size(30, 30),
@@ -66,6 +67,14 @@ internal sealed class BookmarksBar : Panel
         finally { ResumeLayout(true); }
     }
 
+    public void SetBookmarkItemsVisible(bool visible)
+    {
+        if (_bookmarkItemsVisible == visible) return;
+        _bookmarkItemsVisible = visible;
+        if (!visible) _overflowMenu.Close();
+        LayoutButtons();
+    }
+
     public void RememberFavicon(string url, Image favicon)
     {
         if (IsDisposed || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
@@ -120,6 +129,14 @@ internal sealed class BookmarksBar : Panel
         if (overflow) available = Math.Max(0, available - _more.Width - 4);
         foreach (var item in _overflowMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
         _overflowMenu.Items.Clear();
+        if (!_bookmarkItemsVisible)
+        {
+            foreach (var button in _buttons) button.Visible = false;
+            _more.Visible = false;
+            PositionTrailingControl();
+            return;
+        }
+
         var x = Padding.Left;
         var y = Math.Max(0, (Height - 1 - 30) / 2);
         var clipped = false;
@@ -139,6 +156,11 @@ internal sealed class BookmarksBar : Panel
         }
         _more.Visible = _overflowMenu.Items.Count > 0;
         _more.Location = new Point(Math.Max(Padding.Left, ClientSize.Width - Padding.Right - trailingWidth - _more.Width), y);
+        PositionTrailingControl();
+    }
+
+    private void PositionTrailingControl()
+    {
         if (_trailingControl is not null)
             _trailingControl.Location = new Point(
                 Math.Max(Padding.Left, ClientSize.Width - Padding.Right - _trailingControl.Width),

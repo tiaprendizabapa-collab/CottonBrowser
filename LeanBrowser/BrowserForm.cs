@@ -716,7 +716,24 @@ public sealed class BrowserForm : Form
         try { _bookmarksBar.SetBookmarks(_bookmarks.Load()); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
         { _bookmarksBar.SetBookmarks(Array.Empty<Bookmark>()); }
+        UpdateBookmarkItemsVisibility();
+    }
+
+    private void UpdateBookmarkItemsVisibility()
+    {
         _bookmarksBar.Visible = !_windowFullscreen;
+        if (_tabView.SelectedTab is not BrowserTab)
+        {
+            _bookmarksBar.SetBookmarkItemsVisible(_tabView.SelectedTab is not null);
+            return;
+        }
+
+        var url = _core?.Source ?? string.Empty;
+        var isStartPage = string.IsNullOrWhiteSpace(url)
+            || string.Equals(url, "about:blank", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url, HomePage, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
+        _bookmarksBar.SetBookmarkItemsVisible(!isStartPage);
     }
 
     private void OpenSettings()
@@ -992,6 +1009,7 @@ public sealed class BrowserForm : Form
         _forward.Enabled = _core?.CanGoForward == true;
         var url = _core?.Source ?? "";
         ShowUrl(url);
+        UpdateBookmarkItemsVisibility();
         _omnibox.SetFavorite(IsFavorite(url));
         Text = BuildTitle(_core?.DocumentTitle ?? "", _tabs?.Active?.IsPrivate == true);
         _telemetry.RecordActiveTab(url, _core?.DocumentTitle);
@@ -1389,7 +1407,11 @@ public sealed class BrowserForm : Form
         core.SourceChanged += (_, _) =>
         {
             tab.Popups.OnNavigation(core.Source);
-            if (_tabs?.Active == tab) ShowUrl(core.Source);
+            if (_tabs?.Active == tab)
+            {
+                ShowUrl(core.Source);
+                UpdateBookmarkItemsVisibility();
+            }
         };
         core.HistoryChanged += (_, _) => { if (_tabs?.Active == tab) UpdateHistoryButtons(); };
         core.DocumentTitleChanged += (_, _) =>
