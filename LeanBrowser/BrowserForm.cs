@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -1381,7 +1382,7 @@ public sealed class BrowserForm : Form
                     _tabView.SetFavicon(tab, null);
             }
         };
-        core.NavigationCompleted += (_, e) =>
+        core.NavigationCompleted += async (_, e) =>
         {
             tab.Loading = false;
             if (e.IsSuccess)
@@ -1400,6 +1401,27 @@ public sealed class BrowserForm : Form
                         if (!IsDisposed && !tab.IsDisposed && _tabs?.Active == tab && !_omniboxDirty)
                             FocusOmniboxForNewTab();
                     }));
+            }
+            if (e.IsSuccess && string.Equals(core.Source, TrustedBrowserBridge.NewTabUrl,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var accountName = Environment.UserName.Trim().Replace('.', ' ').Replace('_', ' ');
+                    var userName = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(
+                        accountName.ToLower(CultureInfo.CurrentCulture));
+                    if (!string.IsNullOrWhiteSpace(userName))
+                    {
+                        var serializedUserName = JsonSerializer.Serialize(userName);
+                        await core.ExecuteScriptAsync(
+                            $"window.dispatchEvent(new CustomEvent('cottonbrowser-user-name', {{ detail: {serializedUserName} }}));");
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException
+                    or System.Runtime.InteropServices.COMException)
+                {
+                    // The document may change while the greeting name is sent.
+                }
             }
         };
         core.SourceChanged += (_, _) =>
