@@ -150,6 +150,7 @@ public sealed class NetworkProtection : IDisposable
         <body><h1>Site bloqueado</h1><p>O navegador bloqueou esta navegação por política de segurança.</p></body></html>
         """u8.ToArray();
 
+    private readonly WebView2 _control;
     private readonly CoreWebView2 _core;
     private readonly IUrlReputationService _reputation;
     private readonly SiteAllowlist _siteAllowlist;
@@ -165,6 +166,7 @@ public sealed class NetworkProtection : IDisposable
         SiteAllowlist siteAllowlist)
     {
         ArgumentNullException.ThrowIfNull(control);
+        _control = control;
         _reputation = reputation ?? throw new ArgumentNullException(nameof(reputation));
         _siteAllowlist = siteAllowlist ?? throw new ArgumentNullException(nameof(siteAllowlist));
         _confirmInsecureNavigation = confirmInsecureNavigation ?? throw new ArgumentNullException(nameof(confirmInsecureNavigation));
@@ -216,14 +218,47 @@ public sealed class NetworkProtection : IDisposable
         if (accepted)
         {
             _approvedInsecureOrigins.TryAdd(InsecureOriginKey(target), 0);
-            _core.Navigate(requestUri);
+            NavigateOnUiThread(requestUri, epoch);
             return;
         }
 
         // Declining preserves the secure-by-default behavior: attempt HTTPS
         // rather than sending the original clear-text request.
         if (TryUpgradeToHttps(target, out var upgraded))
-            _core.Navigate(upgraded.AbsoluteUri);
+            NavigateOnUiThread(upgraded.AbsoluteUri, epoch);
+    }
+
+    private void NavigateOnUiThread(string uri, long expectedEpoch)
+    {
+        void NavigateIfCurrent()
+        {
+            if (Volatile.Read(ref _disposed) != 0
+                || expectedEpoch != Volatile.Read(ref _navigationEpoch)
+                || _control.IsDisposed || !_control.IsHandleCreated)
+                return;
+
+            try { _core.Navigate(uri); }
+            catch (Exception ex) when (ex is InvalidOperationException
+                or System.Runtime.InteropServices.COMException)
+            {
+                // The WebView can close while the confirmation dialog is open.
+            }
+        }
+
+        if (Volatile.Read(ref _disposed) != 0 || _control.IsDisposed || !_control.IsHandleCreated)
+            return;
+        if (!_control.InvokeRequired)
+        {
+            NavigateIfCurrent();
+            return;
+        }
+
+        try { _control.BeginInvoke((Action)NavigateIfCurrent); }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        {
+            // The window can close before the pending navigation is dispatched.
+        }
     }
 
     private async void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
