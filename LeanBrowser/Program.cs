@@ -71,7 +71,7 @@ internal static class Program
             if (previous is not null)
             {
                 var workArea = Screen.FromControl(previous).WorkingArea;
-                var offset = (_windows.Count % 5 + 1) * 28;
+                var offset = ((_windows.Count - 1) % 5 + 1) * 28;
                 form.StartPosition = FormStartPosition.Manual;
                 form.Location = new Point(
                     Math.Clamp(previous.Left + offset, workArea.Left, Math.Max(workArea.Left, workArea.Right - form.Width)),
