@@ -29,19 +29,20 @@ backup dos arquivos substituídos, instala o novo executável e os arquivos da
 Central e reinicia o programa. Perfil WebView2, histórico, favoritos e outras
 preferências ficam em AppData e não são substituídos.
 
-## Publicar uma versão
+## Publicar atualizações
 
-1. Mescle as alterações na `main` e escolha uma versão maior que a atual,
-   começando por `v1.0.1`.
-2. Crie e envie uma tag dessa versão: `git tag v1.0.1` e
-   `git push origin v1.0.1`.
-3. O workflow de GitHub Actions compila o navegador e o atualizador, cria
-   `CottonBrowser-win-x64.zip` e `CottonBrowserSetup.exe` e publica a Release. O navegador só verá a
-   atualização depois que o pacote estiver publicado.
+Ao mesclar alterações na `main`, o GitHub Actions compila o navegador e o
+atualizador, cria `CottonBrowser-win-x64.zip` e `CottonBrowserSetup.exe` e
+publica uma Release estável automaticamente. A versão recebe o próximo número
+de patch acima da Release mais recente. Não é preciso criar uma tag nem executar
+comandos no PowerShell para distribuir atualizações normais.
 
-As próximas versões seguem o mesmo formato de tag, por exemplo `v1.1.0`.
-Commits ou PRs, sozinhos, não são distribuídos automaticamente. A primeira
-instalação desta funcionalidade precisa ser feita manualmente; versões antigas
-não possuem o código para consultar a API. O pacote requer WebView2 Runtime
-no Windows x64. Instalações em pastas sem permissão
-de escrita, como `Program Files`, precisam de um instalador com elevação.
+O navegador verifica a Release publicada ao abrir e a cada três horas. Ele só
+oferece a instalação depois que a compilação do GitHub Actions termina e os
+arquivos estão disponíveis. Para publicar uma versão manualmente, ainda é possível
+enviar uma tag `vMAJOR.MINOR.PATCH` maior que a versão publicada.
+
+A primeira instalação do recurso de atualização precisa ser manual em versões
+antigas que não consultam a API do GitHub. O pacote requer WebView2 Runtime no
+Windows x64. Instalações em pastas sem permissão de escrita, como `Program
+Files`, precisam de um instalador com elevação.
