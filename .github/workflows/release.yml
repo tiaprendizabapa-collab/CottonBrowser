@@ -2,6 +2,8 @@ name: Publicar CottonBrowser
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -11,6 +13,9 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    concurrency:
+      group: cottonbrowser-release-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -21,17 +26,67 @@ jobs:
         shell: pwsh
         run: dotnet run --project BrowserUpdateChecks -c Release
 
-      - name: Compilar e empacotar
+      - name: Definir versão e compilar
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Tag de versão inválida: $tag" }
-          ./build-installer.ps1 -Version ($tag.Substring(1))
+          if ($env:GITHUB_REF_TYPE -eq 'branch') {
+            if ($env:GITHUB_REF_NAME -ne 'main') { throw "Branch não suportada: $env:GITHUB_REF_NAME" }
+
+            $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Falha ao consultar as versões publicadas.' }
+            $tags = gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags/v" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Falha ao consultar as tags existentes.' }
+
+            $versions = @([Version]'1.0.0')
+            foreach ($release in $releases) {
+              if ($release.draft -or $release.prerelease) { continue }
+              if ($release.tag_name -match '^v(\d+\.\d+\.\d+)$') {
+                $versions += [Version]$Matches[1]
+              }
+            }
+            foreach ($tagRef in $tags) {
+              if ($tagRef.ref -match '/v(\d+\.\d+\.\d+)$') {
+                $versions += [Version]$Matches[1]
+              }
+            }
+
+            $latest = $versions | Sort-Object | Select-Object -Last 1
+            $version = '{0}.{1}.{2}' -f $latest.Major, $latest.Minor, ($latest.Build + 1)
+            $tag = "v$version"
+          }
+          else {
+            $tag = $env:GITHUB_REF_NAME
+            if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Tag de versão inválida: $tag" }
+            $version = $tag.Substring(1)
+          }
+
+          ./build-installer.ps1 -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar e empacotar o CottonBrowser.' }
+
+          "COTTON_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          "COTTON_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Publicar Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create $env:GITHUB_REF_NAME CottonInstaller/dist/CottonBrowser-win-x64.zip CottonInstaller/dist/CottonBrowserSetup.exe --verify-tag --title "CottonBrowser $env:GITHUB_REF_NAME" --generate-notes
+          $arguments = @(
+            'release', 'create', $env:COTTON_RELEASE_TAG,
+            'CottonInstaller/dist/CottonBrowser-win-x64.zip',
+            'CottonInstaller/dist/CottonBrowserSetup.exe',
+            '--title', "CottonBrowser $env:COTTON_RELEASE_TAG"
+          )
+
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $arguments += '--verify-tag'
+            $arguments += '--generate-notes'
+          }
+          else {
+            $arguments += @('--notes', "Atualização automática da branch main (versão $env:COTTON_RELEASE_VERSION).")
+          }
+
+          & gh @arguments
           if ($LASTEXITCODE -ne 0) { throw 'Falha ao publicar a Release.' }
