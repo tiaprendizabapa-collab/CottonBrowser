@@ -12,6 +12,11 @@ public sealed class BrowserForm : Form
 {
     private const string HomePage = TrustedBrowserBridge.NewTabUrl;
     private const int ResizeBorder = 6;
+    private static readonly object BrowserEnvironmentLock = new();
+    private static readonly string BrowserUserDataDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "WebView2");
+    private static readonly AdProtection SharedAdProtection = new();
+    private static Task<CoreWebView2Environment>? _sharedBrowserEnvironmentTask;
 
     private readonly Panel      _toolbar  = new();
     private readonly BookmarksBar _bookmarksBar = new();
@@ -62,7 +67,7 @@ public sealed class BrowserForm : Form
     private readonly BrowserMenuItem _updateItem = new("Atualizar CottonBrowser", "\uE895");
     private readonly BrowserMenuItem _updateBanner = new("Atualização disponível", "\uE895") { IsBanner = true, Visible = false };
     private BrowserUpdate? _availableUpdate;
-    private Version? _offeredUpdateVersion;
+    private static Version? _offeredUpdateVersion;
     private bool _updateBusy;
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
     private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
@@ -70,7 +75,7 @@ public sealed class BrowserForm : Form
     private readonly NavigationTelemetry _telemetry;
     private SettingsTab? _settingsTab;
     private ProfileTab? _profileTab;
-    private readonly AdProtection _adProtection = new();
+    private readonly AdProtection _adProtection = SharedAdProtection;
     private readonly SiteAllowlist _siteAllowlist = new(new SiteExceptionStore());
     private readonly ISecretStore _secrets = new DpapiSecretStore();
     private readonly WebRiskReputationService _urlReputation;
@@ -97,6 +102,8 @@ public sealed class BrowserForm : Form
     private AdBlocker? _blocker => _tabs?.Active?.Blocker;
 
     private CoreWebView2? _core => _web?.CoreWebView2;
+
+    public event Action? NewWindowRequested;
     private bool _loading;
     private bool _omniboxDirty;   // usuario esta editando: nao sobrescrever
     private bool _updatingOmnibox;
@@ -439,6 +446,8 @@ public sealed class BrowserForm : Form
         _overflowButton.MouseLeave += (_, _) => _overflowButton.Invalidate();
         var newTab = new BrowserMenuItem("Nova guia", "\uE710", "Ctrl+T");
         newTab.Click += async (_, _) => await OpenNewTabAsync(_tabs?.Active?.IsPrivate == true);
+        var newWindow = new BrowserMenuItem("Nova janela", "\uE8A7", "Ctrl+N");
+        newWindow.Click += (_, _) => NewWindowRequested?.Invoke();
         var privateTab = new BrowserMenuItem("Nova guia anônima", "\uE727", "Ctrl+Shift+N");
         privateTab.Click += async (_, _) => await OpenNewTabAsync(isPrivate: true);
         var browserCenter = new BrowserMenuItem("Central do navegador", "\uE80F");
@@ -513,7 +522,7 @@ public sealed class BrowserForm : Form
         };
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings,
             new ToolStripSeparator(), protectionStatus });
-        _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, privateTab,
+        _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, newWindow, privateTab,
             new ToolStripSeparator(), profile, history, downloads, favorites, protection, browserCenter,
             new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find,
             new ToolStripSeparator(), configuration, _updateItem, exit });
@@ -1268,20 +1277,26 @@ public sealed class BrowserForm : Form
         base.OnFormClosed(e);
     }
 
+    private static Task<CoreWebView2Environment> GetSharedBrowserEnvironmentAsync()
+    {
+        lock (BrowserEnvironmentLock)
+            return _sharedBrowserEnvironmentTask ??= CreateSharedBrowserEnvironmentAsync();
+    }
+
+    private static async Task<CoreWebView2Environment> CreateSharedBrowserEnvironmentAsync()
+    {
+        Directory.CreateDirectory(BrowserUserDataDirectory);
+        var options = WebContentIsolation.CreateEnvironmentOptions(BrowserArguments());
+        return await CoreWebView2Environment.CreateAsync(
+            browserExecutableFolder: null,
+            userDataFolder: BrowserUserDataDirectory,
+            options: options);
+    }
+
     private async Task InitializeWebViewAsync()
     {
-        var userData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "LeanBrowser", "WebView2");
-
-        Directory.CreateDirectory(userData);
-
-        var options = WebContentIsolation.CreateEnvironmentOptions(BrowserArguments());
-
-        var env = await CoreWebView2Environment.CreateAsync(
-            browserExecutableFolder: null,        // usa o runtime Evergreen do sistema
-            userDataFolder: userData,
-            options: options);
+        var userData = BrowserUserDataDirectory;
+        var env = await GetSharedBrowserEnvironmentAsync();
 
         if (IsDisposed) return;
         _browserEnvironment = env;
@@ -2000,6 +2015,7 @@ public sealed class BrowserForm : Form
         var alt = e.Alt;
         var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D
             || (key == Keys.J && !shift && !alt) || key is Keys.Oemplus or Keys.Add or Keys.OemMinus or Keys.Subtract or Keys.D0 or Keys.NumPad0))
+            || (ctrl && !shift && !alt && key == Keys.N)
             || (ctrl && shift && (key == Keys.A || key == Keys.N))
             || (ctrl && shift && alt && _access.IsAdvancedMode && key == Keys.M)
             || (alt && (key == Keys.D || key == Keys.Left || key == Keys.Right || key == Keys.Home))
@@ -2031,6 +2047,9 @@ public sealed class BrowserForm : Form
         {
             case Keys.M when ctrl && shift && alt && _access.IsAdvancedMode:
                 _ = OpenAdminDashboardAsync();
+                return true;
+            case Keys.N when ctrl && !shift && !alt:
+                NewWindowRequested?.Invoke();
                 return true;
             case Keys.N when ctrl && shift:
                 _ = OpenNewTabAsync(isPrivate: true);
