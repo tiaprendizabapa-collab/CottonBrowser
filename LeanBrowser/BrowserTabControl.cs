@@ -126,7 +126,7 @@ public sealed class BrowserTabControl : TabControl
         if (sender is TabPage tab && _headers.TryGetValue(tab, out var header))
         {
             header.AccessibleName = tab.Text;
-            _toolTip.SetToolTip(header, tab.Text);
+            _toolTip.SetToolTip(header, $"{tab.Text}\nArraste para fora para abrir em outra janela");
             header.Invalidate();
         }
     }
