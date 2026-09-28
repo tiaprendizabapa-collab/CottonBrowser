@@ -733,7 +733,7 @@ public sealed class BrowserForm : Form
             || string.Equals(url, "about:blank", StringComparison.OrdinalIgnoreCase)
             || string.Equals(url, HomePage, StringComparison.OrdinalIgnoreCase)
             || string.Equals(url, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
-        _bookmarksBar.SetBookmarkItemsVisible(!isStartPage);
+        _bookmarksBar.SetBookmarkItemsVisible(isStartPage);
     }
 
     private void OpenSettings()
