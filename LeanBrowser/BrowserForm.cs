@@ -69,6 +69,10 @@ public sealed class BrowserForm : Form
     private BrowserUpdate? _availableUpdate;
     private static Version? _offeredUpdateVersion;
     private bool _updateBusy;
+    private readonly string _initialUrl;
+    private readonly bool _initialIsPrivate;
+    private readonly TaskCompletionSource<bool> _initialTabReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task<bool> InitialTabReady => _initialTabReady.Task;
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
     private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
     private readonly AccessControl _access = new();
@@ -104,6 +108,7 @@ public sealed class BrowserForm : Form
     private CoreWebView2? _core => _web?.CoreWebView2;
 
     public event Action? NewWindowRequested;
+    public event Func<string, bool, Task<bool>>? DetachedTabWindowRequested;
     private bool _loading;
     private bool _omniboxDirty;   // usuario esta editando: nao sobrescrever
     private bool _updatingOmnibox;
@@ -119,8 +124,12 @@ public sealed class BrowserForm : Form
     private string? _lastScreenName;
     private Rectangle _lastScreenWorkArea;
 
-    public BrowserForm()
+    public BrowserForm(string? initialUrl = null, bool initialIsPrivate = false)
     {
+        _initialUrl = string.IsNullOrWhiteSpace(initialUrl) ? HomePage : initialUrl;
+        _initialIsPrivate = initialIsPrivate;
+        _tabView.TabDraggedOutside += OnTabDraggedOutside;
+
         SuspendLayout();
 
         _telemetry = new NavigationTelemetry(_access.UserName);
@@ -1245,9 +1254,11 @@ public sealed class BrowserForm : Form
         try
         {
             await InitializeWebViewAsync();
+            _initialTabReady.TrySetResult(!IsDisposed && _tabView.TabCount > 0);
         }
         catch (Exception ex)
         {
+            _initialTabReady.TrySetResult(false);
             MessageBox.Show(
                 "Nao foi possivel iniciar o motor WebView2.\n\n" + ex.Message +
                 "\n\nInstale o 'Microsoft Edge WebView2 Runtime' (Evergreen) e tente de novo.",
@@ -1258,6 +1269,7 @@ public sealed class BrowserForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _initialTabReady.TrySetResult(false);
         _updateLifetime.Cancel();
         _updatePoll.Dispose();
         _updates.Dispose();
@@ -1328,8 +1340,26 @@ public sealed class BrowserForm : Form
                 MessageBox.Show(this, failure, "Proteção de anúncios", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         };
-        await _tabs.CreateAsync(HomePage, focusOmniboxOnFirstLoad: true);
-        FocusOmniboxForNewTab();
+        var focusOmnibox = string.Equals(_initialUrl, HomePage, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_initialUrl, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
+        await _tabs.CreateAsync(_initialUrl, isPrivate: _initialIsPrivate,
+            focusOmniboxOnFirstLoad: focusOmnibox);
+        if (focusOmnibox) FocusOmniboxForNewTab();
+    }
+
+    private async void OnTabDraggedOutside(BrowserTab tab)
+    {
+        var url = tab.Web.CoreWebView2?.Source;
+        var openDetachedWindow = DetachedTabWindowRequested;
+        if (openDetachedWindow is null || !BookmarkStore.IsWebUrl(url ?? string.Empty)) return;
+
+        bool destinationReady;
+        try { destinationReady = await openDetachedWindow(url!, tab.IsPrivate); }
+        catch { destinationReady = false; }
+
+        if (!destinationReady || IsDisposed || tab.IsDisposed || !_tabView.TabPages.Contains(tab)) return;
+        _tabs?.Close(tab);
+        if (_tabView.TabCount == 0) Close();
     }
 
     private Task<bool> ConfirmInsecureNavigationAsync(Uri target)

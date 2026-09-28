@@ -64,10 +64,12 @@ internal static class Program
     {
         private readonly HashSet<BrowserForm> _windows = new();
         public BrowserApplicationContext() => OpenNewWindow();
-        private void OpenNewWindow()
+        private void OpenNewWindow() => CreateBrowserWindow();
+
+        private BrowserForm CreateBrowserWindow(string? initialUrl = null, bool isPrivate = false)
         {
             var previous = _windows.LastOrDefault();
-            var form = new BrowserForm();
+            var form = new BrowserForm(initialUrl, isPrivate);
             if (previous is not null)
             {
                 var workArea = Screen.FromControl(previous).WorkingArea;
@@ -78,14 +80,23 @@ internal static class Program
                     Math.Clamp(previous.Top + offset, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - form.Height)));
             }
             form.NewWindowRequested += OpenNewWindow;
+            form.DetachedTabWindowRequested += OpenDetachedTabWindowAsync;
             form.FormClosed += OnBrowserWindowClosed;
             _windows.Add(form);
             form.Show();
+            return form;
+        }
+
+        private async Task<bool> OpenDetachedTabWindowAsync(string url, bool isPrivate)
+        {
+            var form = CreateBrowserWindow(url, isPrivate);
+            return await form.InitialTabReady;
         }
         private void OnBrowserWindowClosed(object? sender, FormClosedEventArgs e)
         {
             if (sender is not BrowserForm form || !_windows.Remove(form)) return;
             form.NewWindowRequested -= OpenNewWindow;
+            form.DetachedTabWindowRequested -= OpenDetachedTabWindowAsync;
             if (_windows.Count == 0) ExitThread();
         }
     }

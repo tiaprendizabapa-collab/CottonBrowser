@@ -33,6 +33,7 @@ public sealed class BrowserTabControl : TabControl
     public event Action<TabPage>? AuxiliaryCloseRequested;
     public event Action? NewTabRequested;
     public event Action? BrandClicked;
+    public event Action<BrowserTab>? TabDraggedOutside;
 
     // Recebe a propriedade da imagem; o cabeçalho anterior é libertado.
     public void SetFavicon(TabPage tab, Image? favicon)
@@ -169,6 +170,9 @@ public sealed class BrowserTabControl : TabControl
         private readonly TabPage _tab;
         private Image? _favicon;
         private bool _hoverClose;
+        private bool _dragCandidate;
+        private bool _dragging;
+        private Point _dragOrigin;
         private Rectangle CloseBounds => new(Width - LogicalToDeviceUnits(30),
             (Height - LogicalToDeviceUnits(24)) / 2, LogicalToDeviceUnits(24), LogicalToDeviceUnits(24));
 
@@ -240,6 +244,22 @@ public sealed class BrowserTabControl : TabControl
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (_dragCandidate && (Control.MouseButtons & MouseButtons.Left) != 0)
+            {
+                var current = Cursor.Position;
+                if (!_dragging)
+                {
+                    var dragSize = SystemInformation.DragSize;
+                    var dragBounds = new Rectangle(_dragOrigin.X - dragSize.Width / 2,
+                        _dragOrigin.Y - dragSize.Height / 2, dragSize.Width, dragSize.Height);
+                    _dragging = !dragBounds.Contains(current);
+                }
+                if (_dragging)
+                {
+                    Cursor = Cursors.SizeAll;
+                    return;
+                }
+            }
             var hover = CloseBounds.Contains(e.Location);
             if (_hoverClose == hover) return;
             _hoverClose = hover;
@@ -263,9 +283,28 @@ public sealed class BrowserTabControl : TabControl
             }
             if (e.Button != MouseButtons.Left) return;
             if (CloseBounds.Contains(e.Location))
+            {
                 RequestClose();
-            else
-                _owner.SelectedTab = _tab;
+                return;
+            }
+
+            _owner.SelectedTab = _tab;
+            _dragOrigin = Cursor.Position;
+            _dragCandidate = true;
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            var shouldDetach = e.Button == MouseButtons.Left && _dragCandidate && _dragging;
+            _dragCandidate = false;
+            _dragging = false;
+            Cursor = Cursors.Default;
+            base.OnMouseUp(e);
+
+            if (!shouldDetach || _tab is not BrowserTab tab) return;
+            var form = _owner.FindForm();
+            if (form is not null && !form.Bounds.Contains(Cursor.Position))
+                _owner.TabDraggedOutside?.Invoke(tab);
         }
 
         private void RequestClose()
