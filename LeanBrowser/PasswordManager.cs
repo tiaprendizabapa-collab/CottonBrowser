@@ -9,10 +9,10 @@ namespace LeanBrowser;
 /// </summary>
 public static class PasswordManager
 {
-    public static void Configure(CoreWebView2 core)
+    public static void Configure(CoreWebView2 core, bool isPrivate)
     {
         core.Settings.IsGeneralAutofillEnabled = false;
-        core.Settings.IsPasswordAutosaveEnabled = true;
+        core.Settings.IsPasswordAutosaveEnabled = !isPrivate;
         core.Settings.IsReputationCheckingRequired = true;
     }
 

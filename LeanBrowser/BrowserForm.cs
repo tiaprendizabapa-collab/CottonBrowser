@@ -1340,10 +1340,8 @@ public sealed class BrowserForm : Form
         };
         var faviconRequest = 0;
         ApplySettings(core);
-        PasswordManager.Configure(core);
         if (tab.IsPrivate)
         {
-            core.Settings.IsPasswordAutosaveEnabled = false;
             core.DownloadStarting += (_, args) => OnPrivateDownloadStarting(args);
         }
         else
@@ -1698,7 +1696,7 @@ public sealed class BrowserForm : Form
         s.AreDevToolsEnabled          = false; // sem frontend de devtools carregado
         s.IsStatusBarEnabled          = false; // remove um popup/HWND
         s.IsGeneralAutofillEnabled    = false;
-        // PasswordManager.Configure aplica a política de senhas do perfil.
+        // BrowserTabManager já aplicou a política de senhas ao criar a guia.
         s.IsSwipeNavigationEnabled    = false;
         s.IsPinchZoomEnabled          = false;
         s.AreDefaultContextMenusEnabled = true;

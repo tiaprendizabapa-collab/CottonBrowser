@@ -73,6 +73,9 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
                 await tab.Web.EnsureCoreWebView2Async(environment);
             if (tab.IsDisposed || view.IsDisposed) return null;
             WebContentIsolation.ConfigureUntrustedTab(tab.Web);
+            // A política de senhas é compartilhada pelo perfil; aplique antes de
+            // qualquer inicialização assíncrona ou navegação de outra guia.
+            PasswordManager.Configure(tab.Web.CoreWebView2, tab.IsPrivate);
             if (InitializeTabAsync is not null) await InitializeTabAsync(tab);
             if (tab.IsDisposed || view.IsDisposed) return null;
             tab.Web.CoreWebView2.Navigate(tab.Navigation.CompleteInitialization(url));

@@ -84,7 +84,6 @@ public static class WebContentIsolation
         settings.AreBrowserAcceleratorKeysEnabled = false;
         settings.AreDefaultScriptDialogsEnabled = false;
         settings.IsGeneralAutofillEnabled = false;
-        settings.IsPasswordAutosaveEnabled = false;
         settings.IsReputationCheckingRequired = true;
         settings.IsSwipeNavigationEnabled = false;
         settings.IsWebMessageEnabled = false;
