@@ -1672,7 +1672,6 @@ public sealed class BrowserForm : Form
             "OptimizationHints",           // baixa modelos de hints periodicamente
             "MediaRouter",                 // descoberta de Cast na rede local
             "Translate",
-            "AutofillServerCommunication",
             "InterestFeedContentSuggestions",
             "CalculateNativeWinOcclusion", // ver nota abaixo
         }),
@@ -1695,8 +1694,7 @@ public sealed class BrowserForm : Form
 
         s.AreDevToolsEnabled          = false; // sem frontend de devtools carregado
         s.IsStatusBarEnabled          = false; // remove um popup/HWND
-        s.IsGeneralAutofillEnabled    = false;
-        // BrowserTabManager já aplicou a política de senhas ao criar a guia.
+        // BrowserTabManager já aplicou o preenchimento automático ao perfil.
         s.IsSwipeNavigationEnabled    = false;
         s.IsPinchZoomEnabled          = false;
         s.AreDefaultContextMenusEnabled = true;
