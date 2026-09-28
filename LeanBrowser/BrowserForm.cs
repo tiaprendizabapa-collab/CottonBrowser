@@ -377,7 +377,13 @@ public sealed class BrowserForm : Form
         x += _reload.Width + gap + 6;
 
         _omnibox.Location = new Point(x, (_toolbar.Height - 1 - _omnibox.Height) / 2);
-        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin);
+        var overflowWidth = ReferenceEquals(_overflowButton.Parent, _toolbar)
+            ? _overflowButton.Width + gap
+            : 0;
+        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin - overflowWidth);
+        if (overflowWidth > 0)
+            _overflowButton.Location = new Point(_toolbar.Width - margin - _overflowButton.Width,
+                (_toolbar.Height - _overflowButton.Height) / 2);
         LayoutSuggestions();
     }
 
@@ -722,19 +728,32 @@ public sealed class BrowserForm : Form
 
     private void UpdateBookmarkItemsVisibility()
     {
-        _bookmarksBar.Visible = !_windowFullscreen;
+        bool showBookmarkItems;
         if (_tabView.SelectedTab is not BrowserTab)
         {
-            _bookmarksBar.SetBookmarkItemsVisible(_tabView.SelectedTab is not null);
-            return;
+            showBookmarkItems = _tabView.SelectedTab is not null;
+        }
+        else
+        {
+            var url = _core?.Source ?? string.Empty;
+            showBookmarkItems = string.IsNullOrWhiteSpace(url)
+                || string.Equals(url, "about:blank", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(url, HomePage, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(url, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
         }
 
-        var url = _core?.Source ?? string.Empty;
-        var isStartPage = string.IsNullOrWhiteSpace(url)
-            || string.Equals(url, "about:blank", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url, HomePage, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
-        _bookmarksBar.SetBookmarkItemsVisible(isStartPage);
+        var showBookmarksBar = !_windowFullscreen && showBookmarkItems;
+        _bookmarksBar.SetBookmarkItemsVisible(showBookmarkItems);
+        _bookmarksBar.Visible = showBookmarksBar;
+        if (showBookmarksBar)
+            _bookmarksBar.SetTrailingControl(_overflowButton);
+        else
+        {
+            _bookmarksBar.SetTrailingControl(null);
+            if (!ReferenceEquals(_overflowButton.Parent, _toolbar))
+                _toolbar.Controls.Add(_overflowButton);
+        }
+        LayoutToolbar();
     }
 
     private void OpenSettings()

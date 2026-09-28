@@ -21,12 +21,16 @@ internal sealed class BookmarksBar : Panel
 
     public event Action<string, bool>? OpenRequested;
 
-    public void SetTrailingControl(Control control)
+    public void SetTrailingControl(Control? control)
     {
+        if (ReferenceEquals(_trailingControl, control)) return;
         if (_trailingControl is not null) Controls.Remove(_trailingControl);
         _trailingControl = control;
-        Controls.Add(control);
-        control.BringToFront();
+        if (control is not null)
+        {
+            Controls.Add(control);
+            control.BringToFront();
+        }
         LayoutButtons();
     }
 
