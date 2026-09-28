@@ -5,7 +5,9 @@ namespace LeanBrowser;
 /// <summary>Faixa horizontal de abas, separada do conteúdo WebView2.</summary>
 public sealed class BrowserTabControl : TabControl
 {
+    private const string TabDragFormat = "CottonBrowser.Tab";
     private readonly Dictionary<TabPage, TabHeader> _headers = new();
+    private TabPage? _reorderingTab;
     private readonly Button _newTabButton = new()
     {
         Text = "", AccessibleName = "Nova aba", Size = new Size(36, 36),
@@ -26,7 +28,7 @@ public sealed class BrowserTabControl : TabControl
     public FlowLayoutPanel HeaderStrip { get; } = new()
     {
         Height = 50, WrapContents = false, FlowDirection = FlowDirection.LeftToRight,
-        AutoScroll = true, BackColor = Theme.Chrome, Padding = new Padding(4, 3, 8, 3)
+        AutoScroll = true, AllowDrop = true, BackColor = Theme.Chrome, Padding = new Padding(4, 3, 8, 3)
     };
     public int BrowserTabCount => TabPages.OfType<BrowserTab>().Count();
     public event Action<BrowserTab>? CloseRequested;
@@ -75,6 +77,8 @@ public sealed class BrowserTabControl : TabControl
         HeaderStrip.Controls.Add(_brandLabel);
         HeaderStrip.Controls.Add(_newTabButton);
         HeaderStrip.Paint += PaintHeaderEdge;
+        HeaderStrip.DragEnter += AcceptTabDrag;
+        HeaderStrip.DragOver += AcceptTabDrag;
         _brandLabel.Cursor = Cursors.Hand;
         _brandLabel.Click += (_, _) => BrandClicked?.Invoke();
         _toolTip.SetToolTip(_brandLabel, "CottonBrowser — clique 5 vezes rapidamente");
@@ -92,6 +96,52 @@ public sealed class BrowserTabControl : TabControl
         catch { }
     }
 
+    private static void AcceptTabDrag(object? sender, DragEventArgs e)
+    {
+        e.Effect = e.Data?.GetDataPresent(TabDragFormat) == true
+            ? DragDropEffects.Move : DragDropEffects.None;
+    }
+
+    private void CompleteTabDrag(TabPage tab, Point screenPosition)
+    {
+        if (TabPages.IndexOf(tab) < 0) return;
+
+        // Soltar abaixo da faixa de abas (inclusive sobre a página) abre outra janela.
+        if (!HeaderStrip.RectangleToScreen(HeaderStrip.ClientRectangle).Contains(screenPosition))
+        {
+            if (tab is BrowserTab browserTab) TabDraggedOutside?.Invoke(browserTab);
+            return;
+        }
+
+        var targetIndex = 0;
+        foreach (TabPage other in TabPages)
+        {
+            if (other == tab) continue;
+            var bounds = _headers[other].RectangleToScreen(_headers[other].ClientRectangle);
+            if (screenPosition.X < bounds.Left + bounds.Width / 2) break;
+            targetIndex++;
+        }
+        if (targetIndex == TabPages.IndexOf(tab)) return;
+
+        HeaderStrip.SuspendLayout();
+        _reorderingTab = tab;
+        try
+        {
+            TabPages.Remove(tab);
+            TabPages.Insert(targetIndex, tab);
+            SelectedTab = tab;
+            for (var index = 0; index < TabPages.Count; index++)
+                HeaderStrip.Controls.SetChildIndex(_headers[TabPages[index]], index + 1);
+            HeaderStrip.Controls.SetChildIndex(_newTabButton, HeaderStrip.Controls.Count - 1);
+        }
+        finally
+        {
+            _reorderingTab = null;
+            HeaderStrip.ResumeLayout();
+        }
+        OnSelectedIndexChanged(EventArgs.Empty);
+    }
+
     private static void PaintHeaderEdge(object? sender, PaintEventArgs e)
     {
         if (sender is not Control control || control.ClientSize.Height < 3 || control.ClientSize.Width < 1) return;
@@ -106,17 +156,20 @@ public sealed class BrowserTabControl : TabControl
     {
         base.OnControlAdded(e);
         if (e.Control is not TabPage tab) return;
+        if (tab == _reorderingTab) return;
         var header = new TabHeader(this, tab);
         _headers.Add(tab, header);
         HeaderStrip.Controls.Add(header);
         HeaderStrip.Controls.SetChildIndex(_newTabButton, HeaderStrip.Controls.Count - 1);
         tab.TextChanged += OnTabTextChanged;
+        OnTabTextChanged(tab, EventArgs.Empty);
     }
 
     protected override void OnControlRemoved(ControlEventArgs e)
     {
         base.OnControlRemoved(e);
         if (e.Control is not TabPage tab) return;
+        if (tab == _reorderingTab) return;
         tab.TextChanged -= OnTabTextChanged;
         if (_headers.Remove(tab, out var header)) header.Dispose();
     }
@@ -126,13 +179,14 @@ public sealed class BrowserTabControl : TabControl
         if (sender is TabPage tab && _headers.TryGetValue(tab, out var header))
         {
             header.AccessibleName = tab.Text;
-            _toolTip.SetToolTip(header, $"{tab.Text}\nArraste para fora para abrir em outra janela");
+            _toolTip.SetToolTip(header, $"{tab.Text}\nArraste para mudar a ordem ou abrir em outra janela");
             header.Invalidate();
         }
     }
 
     protected override void OnSelectedIndexChanged(EventArgs e)
     {
+        if (_reorderingTab is not null) return;
         base.OnSelectedIndexChanged(e);
         _toolTip.SetToolTip(_newTabButton, SelectedTab is BrowserTab { IsPrivate: true }
             ? "Nova guia anônima (Ctrl+T)" : "Nova aba (Ctrl+T)");
@@ -171,7 +225,7 @@ public sealed class BrowserTabControl : TabControl
         private Image? _favicon;
         private bool _hoverClose;
         private bool _dragCandidate;
-        private bool _dragging;
+        private bool _dragCanceled;
         private Point _dragOrigin;
         private Rectangle CloseBounds => new(Width - LogicalToDeviceUnits(30),
             (Height - LogicalToDeviceUnits(24)) / 2, LogicalToDeviceUnits(24), LogicalToDeviceUnits(24));
@@ -185,7 +239,33 @@ public sealed class BrowserTabControl : TabControl
             AccessibleName = tab.Text;
             AccessibleRole = AccessibleRole.PageTab;
             TabStop = true;
+            AllowDrop = true;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        }
+
+        protected override void OnDragEnter(DragEventArgs drgevent)
+        {
+            base.OnDragEnter(drgevent);
+            AcceptTabDrag(this, drgevent);
+        }
+
+        protected override void OnDragOver(DragEventArgs drgevent)
+        {
+            base.OnDragOver(drgevent);
+            AcceptTabDrag(this, drgevent);
+        }
+
+        protected override void OnQueryContinueDrag(QueryContinueDragEventArgs qcdevent)
+        {
+            if (qcdevent.EscapePressed) _dragCanceled = true;
+            base.OnQueryContinueDrag(qcdevent);
+        }
+
+        protected override void OnGiveFeedback(GiveFeedbackEventArgs gfbevent)
+        {
+            gfbevent.UseDefaultCursors = false;
+            System.Windows.Forms.Cursor.Current = Cursors.SizeAll;
+            base.OnGiveFeedback(gfbevent);
         }
 
         public void SetFavicon(Image? favicon)
@@ -246,17 +326,17 @@ public sealed class BrowserTabControl : TabControl
             base.OnMouseMove(e);
             if (_dragCandidate && (Control.MouseButtons & MouseButtons.Left) != 0)
             {
-                var current = Cursor.Position;
-                if (!_dragging)
+                var dragSize = SystemInformation.DragSize;
+                var dragBounds = new Rectangle(_dragOrigin.X - dragSize.Width / 2,
+                    _dragOrigin.Y - dragSize.Height / 2, dragSize.Width, dragSize.Height);
+                if (!dragBounds.Contains(System.Windows.Forms.Cursor.Position))
                 {
-                    var dragSize = SystemInformation.DragSize;
-                    var dragBounds = new Rectangle(_dragOrigin.X - dragSize.Width / 2,
-                        _dragOrigin.Y - dragSize.Height / 2, dragSize.Width, dragSize.Height);
-                    _dragging = !dragBounds.Contains(current);
-                }
-                if (_dragging)
-                {
-                    Cursor = Cursors.SizeAll;
+                    _dragCandidate = false;
+                    _dragCanceled = false;
+                    var data = new DataObject(TabDragFormat, "tab");
+                    DoDragDrop(data, DragDropEffects.Move);
+                    if (!_dragCanceled)
+                        _owner.CompleteTabDrag(_tab, System.Windows.Forms.Cursor.Position);
                     return;
                 }
             }
@@ -289,22 +369,14 @@ public sealed class BrowserTabControl : TabControl
             }
 
             _owner.SelectedTab = _tab;
-            _dragOrigin = Cursor.Position;
+            _dragOrigin = System.Windows.Forms.Cursor.Position;
             _dragCandidate = true;
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
-            var shouldDetach = e.Button == MouseButtons.Left && _dragCandidate && _dragging;
             _dragCandidate = false;
-            _dragging = false;
-            Cursor = Cursors.Default;
             base.OnMouseUp(e);
-
-            if (!shouldDetach || _tab is not BrowserTab tab) return;
-            var form = _owner.FindForm();
-            if (form is not null && !form.Bounds.Contains(Cursor.Position))
-                _owner.TabDraggedOutside?.Invoke(tab);
         }
 
         private void RequestClose()
@@ -331,3 +403,4 @@ public sealed class BrowserTabControl : TabControl
         }
     }
 }
+
