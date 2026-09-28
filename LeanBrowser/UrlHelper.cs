@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace LeanBrowser;
@@ -5,10 +6,12 @@ namespace LeanBrowser;
 /// <summary>
 /// Converte o que o usuario digitou na omnibox em uma URL navegavel.
 /// Regras (nesta ordem):
-///   1. Ja tem esquema conhecido            -> usa como esta.
-///   2. localhost / IP / host:porta          -> http://
-///   3. Contem ponto e nao contem espaco     -> https://
-///   4. Qualquer outra coisa                 -> busca no Google.
+///   1. Operador de pesquisa                -> busca no Google.
+///   2. localhost / IP, com ou sem porta    -> http://
+///   3. Dominio com porta                  -> https://
+///   4. Ja tem esquema explicito           -> usa como esta.
+///   5. Contem ponto e nao contem espaco   -> https://
+///   6. Qualquer outra coisa               -> busca no Google.
 /// </summary>
 public static partial class UrlHelper
 {
@@ -19,7 +22,11 @@ public static partial class UrlHelper
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*:", RegexOptions.CultureInvariant)]
     private static partial Regex SchemePrefix();
 
-    [GeneratedRegex(@"^(localhost|127\.0\.0\.1|\[::1\]|(\d{1,3}\.){3}\d{1,3})(:\d{1,5})?(/.*)?$",
+    [GeneratedRegex(@"^(site|filetype|ext|inurl|allinurl|intitle|allintitle|intext|allintext|related|before|after):",
+                    RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex SearchOperatorPrefix();
+
+    [GeneratedRegex(@"^(localhost|127\.0\.0\.1|\[::1\]|(\d{1,3}\.){3}\d{1,3})(:\d{1,5})?([/?#].*)?$",
                     RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex LocalHost();
 
@@ -30,7 +37,20 @@ public static partial class UrlHelper
         if (text.Length == 0)
             return "about:blank";
 
-        // 1. Esquema explicito (https:, http:, file:, about:, mailto:, edge:...)
+        // Operadores como site: tambem se parecem com esquemas, mas sao buscas.
+        if (SearchOperatorPrefix().IsMatch(text))
+            return SearchEndpoint + Uri.EscapeDataString(text);
+
+        // Verifica host:porta antes do esquema: localhost:3000 e exemplo.com:8443
+        // satisfazem a sintaxe de um esquema URI, mas sao enderecos de sites.
+        if (LocalHost().IsMatch(text))
+            return "http://" + text;
+
+        if (HasPort(text) && LooksLikeDomain(text))
+            return "https://" + text;
+
+        // Esquema explicito (https:, http:, file:, about:, mailto:, edge:...).
+        // A permissao para navegar continua sendo validada pela politica do host.
         if (SchemePrefix().IsMatch(text))
             return text;
 
@@ -38,16 +58,23 @@ public static partial class UrlHelper
         if (text.StartsWith("//", StringComparison.Ordinal))
             return "https:" + text;
 
-        // 2. Ambiente local: http, porque quase nenhum dev server local tem TLS.
-        if (LocalHost().IsMatch(text))
-            return "http://" + text;
-
-        // 3. Parece dominio? Precisa de ponto, sem espaco, e um TLD plausivel.
+        // Parece dominio? Precisa de ponto, sem espaco, e um TLD plausivel.
         if (LooksLikeDomain(text))
             return "https://" + text;
 
-        // 4. Fallback: busca.
+        // Fallback: busca.
         return SearchEndpoint + Uri.EscapeDataString(text);
+    }
+
+    private static bool HasPort(string text)
+    {
+        var hostEnd = text.AsSpan().IndexOfAny('/', '?', '#');
+        var authority = hostEnd >= 0 ? text.AsSpan(0, hostEnd) : text.AsSpan();
+        var colon = authority.LastIndexOf(':');
+        return colon > 0
+            && int.TryParse(authority[(colon + 1)..], NumberStyles.None,
+                CultureInfo.InvariantCulture, out var port)
+            && port <= 65535;
     }
 
     private static bool LooksLikeDomain(string text)

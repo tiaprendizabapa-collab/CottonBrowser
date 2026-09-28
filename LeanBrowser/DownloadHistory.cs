@@ -46,15 +46,21 @@ public sealed class DownloadHistoryStore
         lock (_sync) return _entries.ToArray();
     }
 
-    public void Upsert(DownloadEntry entry)
+    public void Upsert(DownloadEntry entry, bool persist = true)
     {
         lock (_sync)
         {
-            _entries.RemoveAll(item => item.Id == entry.Id);
-            _entries.Insert(0, entry);
+            var index = _entries.FindIndex(item => item.Id == entry.Id);
+            if (index >= 0)
+                _entries[index] = entry;
+            else
+            {
+                var insertionIndex = _entries.FindIndex(item => item.StartedAt < entry.StartedAt);
+                _entries.Insert(insertionIndex < 0 ? _entries.Count : insertionIndex, entry);
+            }
             if (_entries.Count > MaxEntries)
                 _entries.RemoveRange(MaxEntries, _entries.Count - MaxEntries);
-            SaveEntries();
+            if (persist) SaveEntries();
         }
     }
 

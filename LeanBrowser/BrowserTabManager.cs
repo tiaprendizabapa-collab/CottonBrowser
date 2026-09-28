@@ -15,12 +15,20 @@ public sealed class BrowserTab : TabPage
     public IDisposable? PermissionSubscription { get; set; }
     public bool Loading { get; set; }
     public bool FocusOmniboxOnFirstLoad { get; set; }
-    public string? PendingNavigation { get; set; }
+    internal TabNavigationState Navigation { get; } = new();
     public BrowserTab(SiteAllowlist siteAllowlist, bool isPrivate = false) : base(isPrivate ? "Guia anônima" : "Nova aba")
     {
         IsPrivate = isPrivate;
         Blocker = new AdBlocker(siteAllowlist);
         Controls.Add(Web);
+    }
+
+    public void NavigateOrQueue(string url)
+    {
+        if (IsDisposed) return;
+        FocusOmniboxOnFirstLoad = false;
+        if (Navigation.Request(url) is { } target)
+            Web.CoreWebView2.Navigate(target);
     }
 
     protected override void Dispose(bool disposing)
@@ -47,7 +55,8 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
         {
             FocusOmniboxOnFirstLoad = focusOmniboxOnFirstLoad
         };
-        view.TabPages.Insert(view.BrowserTabCount, tab);
+        // As guias de páginas e as de configurações compartilham a mesma ordem.
+        view.TabPages.Add(tab);
         view.SelectedTab = tab;
         try
         {
@@ -66,7 +75,7 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
             WebContentIsolation.ConfigureUntrustedTab(tab.Web);
             if (InitializeTabAsync is not null) await InitializeTabAsync(tab);
             if (tab.IsDisposed || view.IsDisposed) return null;
-            tab.Web.CoreWebView2.Navigate(tab.PendingNavigation ?? url);
+            tab.Web.CoreWebView2.Navigate(tab.Navigation.CompleteInitialization(url));
             return tab;
         }
         catch
@@ -90,14 +99,14 @@ public sealed class BrowserTabManager(BrowserTabControl view, CoreWebView2Enviro
         var index = view.TabPages.IndexOf(tab);
         var wasActive = Active == tab;
         view.TabPages.Remove(tab);
-        if (wasActive && view.BrowserTabCount > 0)
-            view.SelectedIndex = Math.Min(index, view.BrowserTabCount - 1);
+        if (wasActive && view.TabCount > 0)
+            view.SelectedIndex = Math.Min(index, view.TabCount - 1);
         tab.Dispose(); // encerra o WebView e seus handlers
     }
 
     public void SelectNext(int direction)
     {
-        var count = view.BrowserTabCount;
+        var count = view.TabCount;
         if (count > 0)
             view.SelectedIndex = (Math.Max(0, view.SelectedIndex) + direction + count) % count;
     }

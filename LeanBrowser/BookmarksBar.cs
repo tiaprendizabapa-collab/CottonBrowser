@@ -133,7 +133,7 @@ internal sealed class BookmarksBar : Panel
                 clipped = true;
                 var bookmark = button.Bookmark;
                 var item = new ToolStripMenuItem(bookmark.Title) { ToolTipText = bookmark.Url };
-                item.Click += (_, _) => OpenRequested?.Invoke(bookmark.Url, false);
+                item.Click += (_, _) => OpenRequested?.Invoke(bookmark.Url, ModifierKeys.HasFlag(Keys.Control));
                 _overflowMenu.Items.Add(item);
             }
         }

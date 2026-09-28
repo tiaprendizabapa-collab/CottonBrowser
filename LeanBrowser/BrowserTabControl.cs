@@ -256,14 +256,22 @@ public sealed class BrowserTabControl : TabControl
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Middle)
+            {
+                RequestClose();
+                return;
+            }
             if (e.Button != MouseButtons.Left) return;
             if (CloseBounds.Contains(e.Location))
-            {
-                if (_tab is BrowserTab tab) _owner.CloseRequested?.Invoke(tab);
-                else _owner.AuxiliaryCloseRequested?.Invoke(_tab);
-            }
+                RequestClose();
             else
                 _owner.SelectedTab = _tab;
+        }
+
+        private void RequestClose()
+        {
+            if (_tab is BrowserTab tab) _owner.CloseRequested?.Invoke(tab);
+            else _owner.AuxiliaryCloseRequested?.Invoke(_tab);
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
