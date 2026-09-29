@@ -4,6 +4,7 @@ cd /d "%~dp0"
 set "DOTNET=dotnet"
 if exist "%~dp0..\.tools\dotnet\dotnet.exe" set "DOTNET=%~dp0..\.tools\dotnet\dotnet.exe"
 set "RESULT=1"
+if exist ".\dist\.build-stamp" del /q ".\dist\.build-stamp"
 
 REM ---------------------------------------------------------------
 REM LeanBrowser - build de release
@@ -60,6 +61,11 @@ if errorlevel 1 (
 )
 
 echo [4/4] Pronto.
+> ".\dist\.build-stamp" echo %DATE% %TIME%
+if errorlevel 1 (
+    echo ERRO ao registrar a compilacao concluida.
+    goto :fim
+)
 echo.
 echo Executavel: %CD%\dist\CottonBrowser.exe
 echo.
@@ -71,3 +77,4 @@ echo.
 echo ---------------------------------------------------------------
 if /i not "%~1"=="--no-pause" pause
 exit /b %RESULT%
+
