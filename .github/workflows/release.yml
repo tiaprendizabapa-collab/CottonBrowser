@@ -65,6 +65,9 @@ jobs:
           ./build-installer.ps1 -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar e empacotar o CottonBrowser.' }
 
+          dotnet run --project BrowserUpdateChecks -c Release -- --package CottonInstaller/dist/CottonBrowser-win-x64.zip
+          if ($LASTEXITCODE -ne 0) { throw 'O pacote publicado não é aceito pelo atualizador do navegador.' }
+
           "COTTON_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
           "COTTON_RELEASE_VERSION=$version" >> $env:GITHUB_ENV
 
