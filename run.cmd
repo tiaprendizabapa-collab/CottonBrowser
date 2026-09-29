@@ -12,4 +12,3 @@ if errorlevel 1 (
 )
 :run
 start "" "%~dp0LeanBrowser\dist\CottonBrowser.exe"
-
