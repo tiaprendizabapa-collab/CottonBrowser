@@ -57,4 +57,3 @@ A primeira instalação do recurso de atualização precisa ser manual em versõ
 antigas que não consultam a API do GitHub. O pacote requer WebView2 Runtime no
 Windows x64. Instalações em pastas sem permissão de escrita, como `Program
 Files`, precisam de um instalador com elevação.
-
