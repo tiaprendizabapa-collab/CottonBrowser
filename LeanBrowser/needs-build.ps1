@@ -44,4 +44,3 @@ catch {
     Write-Error "Nao foi possivel verificar a compilacao local: $_"
     exit 2
 }
-
