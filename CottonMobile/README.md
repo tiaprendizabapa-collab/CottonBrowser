@@ -26,12 +26,16 @@ os dados locais da prévia; não a use como única cópia de favoritos important
 - Bloqueio local de anúncios e rastreadores conhecidos, com a mesma lista de
   domínios da versão para Windows. Toque no escudo da barra de endereço para ver
   os recursos barrados ou desativar/reativar a proteção no site atual.
+- Nas páginas do YouTube, um filtro adicional tenta remover instruções de
+  anúncios do player e ocultar espaços publicitários sem bloquear os vídeos.
 
 Os favoritos, histórico e senhas do Windows não são copiados para o Android.
 O bloqueio Android atua nos recursos de rede do WebView e dos service workers.
-Ele não cobre anúncios hospedados no mesmo domínio do conteúdo nem todos os
-redirecionamentos; o bloqueador baseado na extensão WebView2 não funciona no
-Android. O modo anônimo do Windows não está incluído nesta prévia. Nenhuma
+Ele não cobre todos os anúncios hospedados no mesmo domínio do conteúdo nem
+todos os redirecionamentos. O filtro do YouTube depende do WebView instalado e
+pode precisar de ajustes quando o site mudar; anúncios ainda podem aparecer.
+O bloqueador baseado na extensão WebView2 não funciona no Android. O modo
+anônimo do Windows não está incluído nesta prévia. Nenhuma
 telemetria corporativa é ativada pelo app móvel.
 Caso um service worker não informe o site de origem da requisição, a exceção
 por site pode não se aplicar a essa requisição. A contagem exibida na guia

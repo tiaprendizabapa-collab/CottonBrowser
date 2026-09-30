@@ -19,6 +19,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verificar proteção do YouTube
+        run: node CottonMobile/checks/youtube_protection_check.js
       - name: Verificar lista de bloqueio Android
         run: |
           mkdir -p "$RUNNER_TEMP/cotton-adblock-checks"

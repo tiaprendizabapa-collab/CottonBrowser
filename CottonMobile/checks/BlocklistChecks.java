@@ -38,6 +38,8 @@ public final class BlocklistChecks {
             require(bundled.matchesHost("doubleclick.net"), "Bundled ad domain is missing");
             require(bundled.matchesHost("ads.doubleclick.net"), "Bundled subdomain is not blocked");
             require(!bundled.matchesHost("example.org"), "Benign domain was blocked");
+            require(!bundled.matchesHost("youtube.com"), "YouTube playback host must remain available");
+            require(!bundled.matchesHost("googlevideo.com"), "Video streams must remain available");
             try (var desktopReader = Files.newBufferedReader(Path.of(args[1]), StandardCharsets.UTF_8)) {
                 DomainBlocklist desktop = DomainBlocklist.parse(desktopReader);
                 require(bundled.size() == desktop.size(), "Mobile and desktop rules diverged");
