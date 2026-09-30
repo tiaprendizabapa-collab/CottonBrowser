@@ -6,8 +6,8 @@ namespace LeanBrowser;
 
 /// <summary>
 /// Default-deny permission gate. Camera, microphone, location, and browser
-/// notifications are granted only once after an explicit decision in the
-/// trusted browser UI. No decision is written into the WebView2 profile.
+/// notifications are granted only once after an explicit decision in a
+/// native browser prompt. No decision is written into the WebView2 profile.
 /// </summary>
 public sealed class PermissionPolicy : IDisposable
 {
