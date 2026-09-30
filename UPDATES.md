@@ -17,6 +17,17 @@ continua sendo `CottonBrowser-win-x64.zip`; a Release também oferece
 script. O instalador, o navegador e o atualizador incluem o runtime .NET 8;
 o WebView2 Runtime ainda precisa estar disponível no Windows.
 
+Se o navegador foi instalado pelo `CottonBrowserSetup.exe`, baixar ou atualizar
+os arquivos-fonte do GitHub não troca o executável instalado. Para receber a
+versão mais recente, use **⋮ > Atualizar CottonBrowser** no navegador ou execute
+o `CottonBrowserSetup.exe` da [Release mais recente](https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/latest).
+Feche o navegador antes de executar o setup. O perfil de navegação é preservado.
+
+Se o navegador é aberto pelo `run.cmd` da pasta do repositório, esse comando
+recompila automaticamente quando os arquivos-fonte mudam. Para atualizar o
+executável manualmente, execute `build.cmd` e depois `run.cmd`. O menu Iniciar,
+quando instalado pelo setup, abre outra cópia em `%LOCALAPPDATA%\Programs\CottonBrowser`.
+
 O navegador verifica em segundo plano a última Release estável do repositório
 `tiaprendizabapa-collab/CottonBrowser` ao abrir e a cada três horas. Uma nova
 versão aparece no menu de três pontos, com um ponto colorido no botão. Também é
