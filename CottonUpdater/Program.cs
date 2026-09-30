@@ -51,43 +51,46 @@ internal static class Program
                 !files.Contains("CottonUpdater.exe", StringComparer.OrdinalIgnoreCase))
                 throw new InvalidDataException("O pacote não contém todos os executáveis necessários.");
 
-            var existing = new List<string>();
-            var created = new List<string>();
-            try
+            using (UpdateInstallGate.Acquire(Path.Combine(target, "CottonBrowser.exe"),
+                @"Local\CottonBrowser.SingleInstance.v1", TimeSpan.FromSeconds(45)))
             {
-                // Salva todos os arquivos antes de substituir o primeiro.
-                foreach (var relative in files)
+                var existing = new List<string>();
+                var created = new List<string>();
+                try
                 {
-                    var destination = Path.Combine(target, relative);
-                    if (!File.Exists(destination)) { created.Add(destination); continue; }
-                    var saved = Path.Combine(backup, relative);
-                    Directory.CreateDirectory(Path.GetDirectoryName(saved)!);
-                    File.Copy(destination, saved);
-                    existing.Add(relative);
-                }
+                    // Salva todos os arquivos antes de substituir o primeiro.
+                    foreach (var relative in files)
+                    {
+                        var destination = Path.Combine(target, relative);
+                        if (!File.Exists(destination)) { created.Add(destination); continue; }
+                        var saved = Path.Combine(backup, relative);
+                        Directory.CreateDirectory(Path.GetDirectoryName(saved)!);
+                        File.Copy(destination, saved);
+                        existing.Add(relative);
+                    }
 
-                foreach (var relative in files)
-                {
-                    var destination = Path.Combine(target, relative);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    File.Copy(Path.Combine(extracted, relative), destination, overwrite: true);
+                    foreach (var relative in files)
+                    {
+                        var destination = Path.Combine(target, relative);
+                        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                        File.Copy(Path.Combine(extracted, relative), destination, overwrite: true);
+                    }
                 }
+                catch
+                {
+                    foreach (var relative in existing)
+                    {
+                        try { File.Copy(Path.Combine(backup, relative), Path.Combine(target, relative), true); }
+                        catch { /* preserva o backup no staging para recuperação */ }
+                    }
+                    foreach (var path in created)
+                    {
+                        try { if (File.Exists(path)) File.Delete(path); } catch { }
+                    }
+                    throw;
+                }
+                RefreshInstalledVersion(target);
             }
-            catch
-            {
-                foreach (var relative in existing)
-                {
-                    try { File.Copy(Path.Combine(backup, relative), Path.Combine(target, relative), true); }
-                    catch { /* preserva o backup no staging para recuperação */ }
-                }
-                foreach (var path in created)
-                {
-                    try { if (File.Exists(path)) File.Delete(path); } catch { }
-                }
-                throw;
-            }
-
-            RefreshInstalledVersion(target);
 
             try
             {
