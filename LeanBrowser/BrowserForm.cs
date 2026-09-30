@@ -91,6 +91,8 @@ public sealed class BrowserForm : Form
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "bookmarks.json"));
     private readonly DownloadHistoryStore _downloadHistory = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "downloads.json"));
+    private readonly MediaDownloadService _mediaDownloadService = new();
+    private readonly HashSet<CancellationTokenSource> _mediaDownloadJobs = new();
     private readonly Dictionary<CoreWebView2DownloadOperation, DownloadEntry> _activeDownloads = new();
     private readonly Dictionary<Guid, long> _lastPersistedDownloadTick = new();
     private DownloadsTab? _downloadsTab;
@@ -473,6 +475,13 @@ public sealed class BrowserForm : Form
         profile.Click += (_, _) => OpenProfile();
         var downloads = new BrowserMenuItem("Downloads", "\uE896", "Ctrl+J");
         downloads.Click += (_, _) => OpenDownloads();
+        var media = new BrowserMenuItem("Baixar mídia desta página", "\uE896");
+        var downloadVideo = new BrowserMenuItem("Baixar vídeo", "\uE714");
+        downloadVideo.Click += async (_, _) => await DownloadPageMediaAsync(MediaDownloadKind.Video);
+        var downloadAudio = new BrowserMenuItem("Baixar áudio (formato original)", "\uE189");
+        downloadAudio.Click += async (_, _) => await DownloadPageMediaAsync(MediaDownloadKind.Audio);
+        media.DropDownItems.AddRange(new ToolStripItem[] { downloadVideo, downloadAudio });
+        media.DropDownOpening += (_, _) => PrepareSubmenu(media);
         var history = new BrowserMenuItem("Histórico recente", "\uE81C");
         history.DropDownItems.Add(new BrowserMenuItem("Nenhuma página recente") { Enabled = false });
         history.DropDownOpening += (_, _) => PopulateHistoryMenu(history);
@@ -532,7 +541,7 @@ public sealed class BrowserForm : Form
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings,
             new ToolStripSeparator(), protectionStatus });
         _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, newWindow, privateTab,
-            new ToolStripSeparator(), profile, history, downloads, favorites, protection, browserCenter,
+            new ToolStripSeparator(), profile, history, downloads, media, favorites, protection, browserCenter,
             new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find,
             new ToolStripSeparator(), configuration, _updateItem, exit });
         _overflowMenu.Opening += (_, _) =>
@@ -540,6 +549,7 @@ public sealed class BrowserForm : Form
             var ready = _tabs?.Active?.Navigation.IsReady == true;
             print.Enabled = find.Enabled = ready;
             history.Enabled = _tabs?.Active?.IsPrivate != true;
+            media.Enabled = MediaDownloadService.IsSupportedPageUrl(_core?.Source);
             _menuZoom.SetState(_web?.ZoomFactor ?? 1, ready, _windowFullscreen);
             _updateBanner.Visible = _availableUpdate is not null;
             _updateBanner.Enabled = !_updateBusy;
@@ -815,6 +825,99 @@ public sealed class BrowserForm : Form
         _tabView.SelectedTab = _downloadsTab;
     }
 
+    private async Task DownloadPageMediaAsync(MediaDownloadKind kind)
+    {
+        var tab = _tabs?.Active;
+        var url = tab?.Web.CoreWebView2?.Source;
+        if (tab is null || !MediaDownloadService.IsSupportedPageUrl(url)) return;
+
+        if (!_mediaDownloadService.ToolsReady(kind))
+        {
+            const string size = "até 260 MB";
+            var answer = MessageBox.Show(this,
+                $"Para baixar {(kind == MediaDownloadKind.Video ? "vídeo" : "áudio")}, o CottonBrowser precisa preparar yt-dlp, Deno e FFmpeg " +
+                $"a partir das versões oficiais ({size} no primeiro uso).\n\nContinuar?",
+                "Preparar download de mídia", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+            if (answer != DialogResult.OK) return;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        _mediaDownloadJobs.Add(cancellation);
+        var dialog = new MediaDownloadDialog(kind, url!, cancellation.Cancel);
+        dialog.Show(this);
+        var startedAt = DateTimeOffset.Now;
+        DownloadEntry? entry = tab.IsPrivate ? null : new DownloadEntry(
+            Guid.NewGuid(), kind == MediaDownloadKind.Video ? "Preparando vídeo" : "Preparando áudio",
+            url!, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
+            0, -1, DownloadStatus.InProgress, null, startedAt, null);
+        if (entry is not null)
+        {
+            _downloadHistory.Upsert(entry);
+            ScheduleDownloadRefresh();
+        }
+
+        var finished = false;
+        var lastPersistedTick = Environment.TickCount64;
+        var progress = new Progress<MediaDownloadProgress>(update =>
+        {
+            if (finished || IsDisposed) return;
+            if (!dialog.IsDisposed) dialog.UpdateProgress(update);
+            if (entry is null) return;
+            entry = entry with
+            {
+                BytesReceived = Math.Max(0, update.BytesReceived),
+                TotalBytes = update.TotalBytes <= 0 ? -1 : update.TotalBytes
+            };
+            var now = Environment.TickCount64;
+            var persist = now - lastPersistedTick >= 1000;
+            _downloadHistory.Upsert(entry, persist);
+            if (persist) lastPersistedTick = now;
+            ScheduleDownloadRefresh();
+        });
+
+        try
+        {
+            var result = await _mediaDownloadService.DownloadAsync(url!, kind, progress, cancellation.Token);
+            finished = true;
+            if (!dialog.IsDisposed) dialog.MarkCompleted(result.FilePath);
+            if (entry is not null)
+            {
+                entry = entry with
+                {
+                    FileName = Path.GetFileName(result.FilePath),
+                    FilePath = result.FilePath,
+                    BytesReceived = result.FileSize,
+                    TotalBytes = result.FileSize,
+                    Status = DownloadStatus.Completed,
+                    FinishedAt = DateTimeOffset.Now
+                };
+                _downloadHistory.Upsert(entry);
+                ScheduleDownloadRefresh();
+            }
+        }
+        catch (Exception ex)
+        {
+            finished = true;
+            var detail = ex is OperationCanceledException ? "Cancelado" : ex.Message;
+            if (!dialog.IsDisposed && !IsDisposed) dialog.MarkFailed(detail);
+            if (entry is not null)
+            {
+                entry = entry with
+                {
+                    Status = DownloadStatus.Interrupted,
+                    Detail = detail,
+                    FinishedAt = DateTimeOffset.Now
+                };
+                _downloadHistory.Upsert(entry);
+                ScheduleDownloadRefresh();
+            }
+        }
+        finally
+        {
+            _mediaDownloadJobs.Remove(cancellation);
+        }
+    }
+
     private void ApplyTheme(bool dark)
     {
         Theme.SetDark(dark);
@@ -829,6 +932,7 @@ public sealed class BrowserForm : Form
         _settingsTab?.ApplyTheme();
         _profileTab?.ApplyTheme();
         _downloadsTab?.ApplyTheme();
+        foreach (var dialog in OwnedForms.OfType<MediaDownloadDialog>()) dialog.ApplyTheme();
         _suggestionPanel.Invalidate();
         _omnibox.Zoom.Invalidate();
         foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
@@ -1270,6 +1374,8 @@ public sealed class BrowserForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _initialTabReady.TrySetResult(false);
+        foreach (var job in _mediaDownloadJobs.ToArray()) job.Cancel();
+        _mediaDownloadService.Dispose();
         _updateLifetime.Cancel();
         _updatePoll.Dispose();
         _updates.Dispose();

@@ -71,6 +71,10 @@ jobs:
         shell: pwsh
         run: dotnet run --project BrowserUpdateChecks -c Release
 
+      - name: Verificar downloads de mídia
+        shell: pwsh
+        run: dotnet run --project MediaDownloadChecks -c Release
+
       - name: Definir versão e compilar
         shell: pwsh
         env:
