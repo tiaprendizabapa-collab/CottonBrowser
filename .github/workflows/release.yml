@@ -66,6 +66,10 @@ jobs:
         shell: pwsh
         run: dotnet run --project BrowserUpdateChecks -c Release
 
+      - name: Verificar trava durante a atualização
+        shell: pwsh
+        run: dotnet run --project CottonUpdaterChecks -c Release
+
       - name: Definir versão e compilar
         shell: pwsh
         env:
