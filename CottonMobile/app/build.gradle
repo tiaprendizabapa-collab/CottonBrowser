@@ -2,6 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
+def ciBuildNumber = System.getenv('GITHUB_RUN_NUMBER')
+def mobileVersionCode = ciBuildNumber?.isInteger() ? ciBuildNumber.toInteger() : 1
+
 android {
     namespace 'com.cottonbrowser.mobile'
     compileSdk 35
@@ -10,8 +13,8 @@ android {
         applicationId 'com.cottonbrowser.mobile'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode mobileVersionCode
+        versionName "0.1.0-preview.${mobileVersionCode}"
     }
 
     buildTypes {

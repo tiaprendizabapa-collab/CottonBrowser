@@ -798,25 +798,31 @@ public final class MainActivity extends Activity {
 
     /** Never pass an untrusted picker URI to WebView without a picker read grant. */
     private Uri[] verifiedPickerUris(int resultCode, Intent result) {
-        if (resultCode != RESULT_OK || result == null
-                || (result.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) return null;
+        try {
+            if (resultCode != RESULT_OK || result == null
+                    || (result.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) return null;
 
-        List<Uri> selected = new ArrayList<>();
-        ClipData clipData = result.getClipData();
-        if (clipData != null) {
-            int count = clipData.getItemCount();
-            if (count < 1 || count > MAX_SELECTED_FILES || (!fileChooserAllowsMultiple && count > 1)) return null;
-            for (int i = 0; i < count; i++) {
-                Uri uri = clipData.getItemAt(i).getUri();
-                if (!isSafePickerUri(uri)) return null; // Reject the entire result, not just one item.
-                if (!selected.contains(uri)) selected.add(uri);
+            List<Uri> selected = new ArrayList<>();
+            ClipData clipData = result.getClipData();
+            if (clipData != null) {
+                int count = clipData.getItemCount();
+                if (count < 1 || count > MAX_SELECTED_FILES || (!fileChooserAllowsMultiple && count > 1)) return null;
+                for (int i = 0; i < count; i++) {
+                    ClipData.Item item = clipData.getItemAt(i);
+                    Uri uri = item == null ? null : item.getUri();
+                    if (!isSafePickerUri(uri)) return null; // Reject the entire result, not just one item.
+                    if (!selected.contains(uri)) selected.add(uri);
+                }
+            } else {
+                Uri uri = result.getData();
+                if (!isSafePickerUri(uri)) return null;
+                selected.add(uri);
             }
-        } else {
-            Uri uri = result.getData();
-            if (!isSafePickerUri(uri)) return null;
-            selected.add(uri);
+            return selected.isEmpty() ? null : selected.toArray(new Uri[0]);
+        } catch (RuntimeException ignored) {
+            // A malformed parcel or provider result is equivalent to canceling the picker.
+            return null;
         }
-        return selected.isEmpty() ? null : selected.toArray(new Uri[0]);
     }
 
     private boolean isSafePickerUri(Uri uri) {
