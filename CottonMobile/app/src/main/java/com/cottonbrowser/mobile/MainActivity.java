@@ -29,6 +29,8 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
 import android.webkit.SslErrorHandler;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
@@ -57,8 +59,13 @@ import org.json.JSONObject;
 import java.io.File;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** A deliberately local-first browser. Web pages never receive a JavaScript bridge. */
 public final class MainActivity extends Activity {
@@ -73,10 +80,13 @@ public final class MainActivity extends Activity {
     private static final int MAX_SELECTED_FILES = 16;
     private static final String PREFS_NAME = "cotton_mobile";
     private static final String BOOKMARKS_KEY = "bookmarks";
+    private static final String PROTECTION_EXCEPTIONS_KEY = "protection_exceptions";
 
     private final List<BrowserTab> tabs = new ArrayList<>();
     private final List<Bookmark> bookmarks = new ArrayList<>();
-    private BrowserTab activeTab;
+    private volatile BrowserTab activeTab;
+    private AdBlocker adBlocker;
+    private volatile Set<String> protectionExceptions = Collections.emptySet();
     private FrameLayout pageHost;
     private LinearLayout tabItems;
     private HorizontalScrollView tabScroller;
@@ -85,6 +95,7 @@ public final class MainActivity extends Activity {
     private TextView forwardButton;
     private TextView reloadButton;
     private TextView bookmarkButton;
+    private ImageView protectionButton;
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> fileChooserCallback;
     private boolean fileChooserAllowsMultiple;
@@ -96,8 +107,20 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(HEADER);
         WebView.setWebContentsDebuggingEnabled(false);
         readBookmarks();
+        readProtectionExceptions();
+        adBlocker = AdBlocker.load(this);
+        // Service workers can fetch resources outside a tab's WebViewClient.
+        // Register their interceptor before the first WebView is created.
+        ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                if (isProtectionExceptionForServiceWorker(request)) return null;
+                return adBlocker.intercept(request);
+            }
+        });
         buildInterface();
         addTab(null, true);
+        if (adBlocker.getDomainCount() == 0) toast("Lista de bloqueio indisponível nesta instalação");
     }
 
     private void buildInterface() {
@@ -190,6 +213,13 @@ public final class MainActivity extends Activity {
             navigateFromOmnibox();
             return true;
         });
+
+        protectionButton = new ImageView(this);
+        protectionButton.setImageResource(R.drawable.ic_shield);
+        protectionButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        protectionButton.setBackground(rounded(SURFACE, 12));
+        addressSurface.addView(protectionButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        protectionButton.setOnClickListener(view -> showProtectionDialog());
 
         bookmarkButton = toolbarButton("☆", "Adicionar aos favoritos");
         addressSurface.addView(bookmarkButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
@@ -484,6 +514,15 @@ public final class MainActivity extends Activity {
         bookmarkButton.setText(saved ? "★" : "☆");
         bookmarkButton.setTextColor(saved ? ACCENT : TEXT);
         bookmarkButton.setContentDescription(saved ? "Remover dos favoritos" : "Adicionar aos favoritos");
+        boolean protectedSite = adBlocker.getDomainCount() > 0
+                && !isProtectionDisabledForUrl(activeTab.url);
+        protectionButton.setImageTintList(android.content.res.ColorStateList.valueOf(
+                protectedSite ? ACCENT : MUTED));
+        protectionButton.setContentDescription(adBlocker.getDomainCount() == 0
+                ? "Proteção indisponível"
+                : protectedSite
+                    ? "Proteção ativa neste site"
+                    : "Proteção desativada neste site");
     }
 
     private void showMenu(View anchor) {
@@ -492,16 +531,85 @@ public final class MainActivity extends Activity {
         menu.getMenu().add(0, 2, 1, "Favoritos");
         menu.getMenu().add(0, 3, 2, "Adicionar aos favoritos");
         menu.getMenu().add(0, 4, 3, "Página inicial");
+        menu.getMenu().add(0, 5, 4, "Proteção deste site");
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 1: addTab(null, true); return true;
                 case 2: showBookmarks(); return true;
                 case 3: toggleBookmark(); return true;
                 case 4: showHome(); return true;
+                case 5: showProtectionDialog(); return true;
                 default: return false;
             }
         });
         menu.show();
+    }
+
+    private void readProtectionExceptions() {
+        try {
+            Set<String> saved = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getStringSet(PROTECTION_EXCEPTIONS_KEY, Collections.emptySet());
+            protectionExceptions = Collections.unmodifiableSet(new HashSet<>(saved));
+        } catch (RuntimeException ignored) {
+            protectionExceptions = Collections.emptySet();
+        }
+    }
+
+    private static String hostFromUrl(String url) {
+        if (!isWebUrl(url)) return null;
+        String host = Uri.parse(url).getHost();
+        return host == null ? null : host.toLowerCase(Locale.ROOT);
+    }
+
+    private boolean isProtectionDisabledForUrl(String url) {
+        String host = hostFromUrl(url);
+        return host != null && protectionExceptions.contains(host);
+    }
+
+    private boolean isProtectionExceptionForServiceWorker(WebResourceRequest request) {
+        Map<String, String> headers = request.getRequestHeaders();
+        if (headers == null) return false;
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            String name = header.getKey();
+            if (name != null && (name.equalsIgnoreCase("Referer") || name.equalsIgnoreCase("Origin"))
+                    && isProtectionDisabledForUrl(header.getValue())) return true;
+        }
+        return false;
+    }
+
+    private void showProtectionDialog() {
+        if (adBlocker.getDomainCount() == 0) {
+            new AlertDialog.Builder(this).setTitle("Proteção indisponível")
+                    .setMessage("A lista de bloqueio não pôde ser carregada nesta instalação.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        if (activeTab == null || !isWebUrl(activeTab.url)) {
+            toast("Abra um site para configurar a proteção");
+            return;
+        }
+        BrowserTab tab = activeTab;
+        String host = hostFromUrl(tab.url);
+        boolean enabled = !protectionExceptions.contains(host);
+        String message = host + "\n\nRequisições bloqueadas nesta guia: "
+                + tab.blockedCount.get() + ". Solicitações em segundo plano não entram nessa contagem."
+                + (enabled ? "\n\nSe o site não funcionar, desative a proteção apenas para ele."
+                : "\n\nA proteção está desativada neste site.");
+        new AlertDialog.Builder(this)
+                .setTitle("Proteção contra anúncios")
+                .setMessage(message)
+                .setPositiveButton(enabled ? "Desativar neste site" : "Ativar neste site", (dialog, which) -> {
+                    Set<String> changed = new HashSet<>(protectionExceptions);
+                    if (enabled) changed.add(host);
+                    else changed.remove(host);
+                    protectionExceptions = Collections.unmodifiableSet(changed);
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putStringSet(PROTECTION_EXCEPTIONS_KEY, changed).apply();
+                    tab.webView.reload();
+                    if (tab == activeTab) updateControls();
+                })
+                .setNegativeButton("Fechar", null)
+                .show();
     }
 
     private void toggleBookmark() {
@@ -670,6 +778,14 @@ public final class MainActivity extends Activity {
         BrowserClient(BrowserTab tab) { this.tab = tab; }
 
         @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            if (isProtectionDisabledForUrl(tab.url)) return null;
+            WebResourceResponse blocked = adBlocker.intercept(request);
+            if (blocked != null) tab.blockedCount.incrementAndGet();
+            return blocked;
+        }
+
+        @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             if (!request.isForMainFrame()) return false;
             String url = request.getUrl().toString();
@@ -683,6 +799,7 @@ public final class MainActivity extends Activity {
             if (!tabs.contains(tab)) return;
             tab.loading = true;
             tab.progress = 5;
+            tab.blockedCount.set(0);
             if (isWebUrl(url)) tab.url = url;
             tab.error.setVisibility(View.GONE);
             tab.home.setVisibility(View.GONE);
@@ -858,6 +975,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        ServiceWorkerController.getInstance().setServiceWorkerClient(null);
         if (fileChooserCallback != null) {
             fileChooserCallback.onReceiveValue(null);
             fileChooserCallback = null;
@@ -910,8 +1028,9 @@ public final class MainActivity extends Activity {
         View error;
         TextView errorDetails;
         String title;
-        String url;
+        volatile String url;
         Bitmap favicon;
+        final AtomicInteger blockedCount = new AtomicInteger();
         int progress;
         boolean loading;
     }

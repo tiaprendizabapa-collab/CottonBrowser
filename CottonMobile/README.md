@@ -23,10 +23,19 @@ os dados locais da prévia; não a use como única cópia de favoritos important
   nova janela em uma nova aba.
 - WebView com proteção contra conteúdo misto, acesso a arquivos locais e
   JavaScript bridge desativados. O APK distribuído não permite depuração.
+- Bloqueio local de anúncios e rastreadores conhecidos, com a mesma lista de
+  domínios da versão para Windows. Toque no escudo da barra de endereço para ver
+  os recursos barrados ou desativar/reativar a proteção no site atual.
 
 Os favoritos, histórico e senhas do Windows não são copiados para o Android.
-O bloqueador baseado na extensão WebView2 e o modo anônimo do Windows não estão
-incluídos nesta prévia. Nenhuma telemetria corporativa é ativada pelo app móvel.
+O bloqueio Android atua nos recursos de rede do WebView e dos service workers.
+Ele não cobre anúncios hospedados no mesmo domínio do conteúdo nem todos os
+redirecionamentos; o bloqueador baseado na extensão WebView2 não funciona no
+Android. O modo anônimo do Windows não está incluído nesta prévia. Nenhuma
+telemetria corporativa é ativada pelo app móvel.
+Caso um service worker não informe o site de origem da requisição, a exceção
+por site pode não se aplicar a essa requisição. A contagem exibida na guia
+considera apenas os recursos interceptados diretamente pelo WebView.
 Câmera, microfone e localização solicitados por sites também estão desativados
 até que haja um fluxo de permissão por origem. A seleção de arquivos iniciada
 pelo usuário continua disponível.

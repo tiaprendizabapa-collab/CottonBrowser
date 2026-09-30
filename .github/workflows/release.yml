@@ -19,6 +19,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Verificar lista de bloqueio Android
+        run: |
+          mkdir -p "$RUNNER_TEMP/cotton-adblock-checks"
+          javac -d "$RUNNER_TEMP/cotton-adblock-checks" \
+            CottonMobile/app/src/main/java/com/cottonbrowser/mobile/DomainBlocklist.java \
+            CottonMobile/checks/BlocklistChecks.java
+          java -cp "$RUNNER_TEMP/cotton-adblock-checks" \
+            com.cottonbrowser.mobile.BlocklistChecks \
+            CottonMobile/app/src/main/assets/blocklist.txt \
+            LeanBrowser/Assets/blocklist.txt
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
