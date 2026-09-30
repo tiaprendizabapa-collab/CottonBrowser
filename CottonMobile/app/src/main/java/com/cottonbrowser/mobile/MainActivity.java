@@ -8,6 +8,8 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Insets;
@@ -18,6 +20,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
+import android.os.Process;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -67,6 +70,7 @@ public final class MainActivity extends Activity {
     private static final int MUTED = 0xFFB4B4CB;
     private static final int ACCENT = 0xFFB69BFF;
     private static final int FILE_CHOOSER_REQUEST = 101;
+    private static final int MAX_SELECTED_FILES = 16;
     private static final String PREFS_NAME = "cotton_mobile";
     private static final String BOOKMARKS_KEY = "bookmarks";
 
@@ -83,6 +87,7 @@ public final class MainActivity extends Activity {
     private TextView bookmarkButton;
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> fileChooserCallback;
+    private boolean fileChooserAllowsMultiple;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -765,6 +770,7 @@ public final class MainActivity extends Activity {
         public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
             if (fileChooserCallback != null) fileChooserCallback.onReceiveValue(null);
             fileChooserCallback = callback;
+            fileChooserAllowsMultiple = params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
             try {
                 Intent picker = params.createIntent();
                 picker.addCategory(Intent.CATEGORY_OPENABLE);
@@ -772,6 +778,7 @@ public final class MainActivity extends Activity {
                 return true;
             } catch (Exception error) {
                 fileChooserCallback = null;
+                fileChooserAllowsMultiple = false;
                 callback.onReceiveValue(null);
                 toast("Nenhum aplicativo para escolher arquivo");
                 return true;
@@ -783,9 +790,45 @@ public final class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == FILE_CHOOSER_REQUEST && fileChooserCallback != null) {
-            fileChooserCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+            fileChooserCallback.onReceiveValue(verifiedPickerUris(resultCode, data));
             fileChooserCallback = null;
+            fileChooserAllowsMultiple = false;
         }
+    }
+
+    /** Never pass an untrusted picker URI to WebView without a picker read grant. */
+    private Uri[] verifiedPickerUris(int resultCode, Intent result) {
+        if (resultCode != RESULT_OK || result == null
+                || (result.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) return null;
+
+        List<Uri> selected = new ArrayList<>();
+        ClipData clipData = result.getClipData();
+        if (clipData != null) {
+            int count = clipData.getItemCount();
+            if (count < 1 || count > MAX_SELECTED_FILES || (!fileChooserAllowsMultiple && count > 1)) return null;
+            for (int i = 0; i < count; i++) {
+                Uri uri = clipData.getItemAt(i).getUri();
+                if (!isSafePickerUri(uri)) return null; // Reject the entire result, not just one item.
+                if (!selected.contains(uri)) selected.add(uri);
+            }
+        } else {
+            Uri uri = result.getData();
+            if (!isSafePickerUri(uri)) return null;
+            selected.add(uri);
+        }
+        return selected.isEmpty() ? null : selected.toArray(new Uri[0]);
+    }
+
+    private boolean isSafePickerUri(Uri uri) {
+        if (uri == null || !"content".equals(uri.getScheme())) return false;
+        String authority = uri.getAuthority();
+        if (authority == null || authority.isEmpty()) return false;
+        String ownPackage = getPackageName();
+        if (authority.equals(ownPackage) || authority.startsWith(ownPackage + ".")) return false;
+        ProviderInfo provider = getPackageManager().resolveContentProvider(authority, 0);
+        if (provider != null && ownPackage.equals(provider.packageName)) return false;
+        return checkUriPermission(uri, Process.myPid(), Process.myUid(),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED;
     }
 
     @Override

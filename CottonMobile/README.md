@@ -22,15 +22,18 @@ os dados locais da prévia; não a use como única cópia de favoritos important
 - Favoritos locais, downloads pelo gerenciador do Android e links que pedem
   nova janela em uma nova aba.
 - WebView com proteção contra conteúdo misto, acesso a arquivos locais e
-  JavaScript bridge desativados. Sites usam as permissões normais do Android.
+  JavaScript bridge desativados. O APK distribuído não permite depuração.
 
 Os favoritos, histórico e senhas do Windows não são copiados para o Android.
 O bloqueador baseado na extensão WebView2 e o modo anônimo do Windows não estão
 incluídos nesta prévia. Nenhuma telemetria corporativa é ativada pelo app móvel.
+Câmera, microfone e localização solicitados por sites também estão desativados
+até que haja um fluxo de permissão por origem. A seleção de arquivos iniciada
+pelo usuário continua disponível.
 
 ## Compilar
 
 Abra esta pasta no Android Studio com JDK 17 e Android SDK 35. Execute
-`gradle :app:assembleDebug` para produzir
-`app/build/outputs/apk/debug/app-debug.apk`. A publicação do repositório
+`gradle :app:assembleRelease` para produzir
+`app/build/outputs/apk/release/app-release.apk`. A publicação do repositório
 compila o mesmo APK em GitHub Actions e o anexa à Release.

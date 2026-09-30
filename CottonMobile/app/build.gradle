@@ -17,6 +17,9 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            debuggable false
+            // Prévia instalável; uma chave de publicação estável requer secrets do repositório.
+            signingConfig signingConfigs.debug
         }
     }
 
