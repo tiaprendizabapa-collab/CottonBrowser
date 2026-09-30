@@ -84,7 +84,6 @@ public sealed class BrowserForm : Form
     private readonly ISecretStore _secrets = new DpapiSecretStore();
     private readonly WebRiskReputationService _urlReputation;
     private readonly PermissionPolicy _permissionPolicy = new();
-    private bool _permissionCenterOpening;
     private bool _changingProtection;
     private bool _protectionFailureShown;
     private readonly BookmarkStore _bookmarks = new(Path.Combine(
@@ -459,8 +458,6 @@ public sealed class BrowserForm : Form
         newWindow.Click += (_, _) => NewWindowRequested?.Invoke();
         var privateTab = new BrowserMenuItem("Nova guia anônima", "\uE727", "Ctrl+Shift+N");
         privateTab.Click += async (_, _) => await OpenNewTabAsync(isPrivate: true);
-        var browserCenter = new BrowserMenuItem("Central do navegador", "\uE80F");
-        browserCenter.Click += async (_, _) => await OpenTabAsync(TrustedBrowserBridge.UiUrl);
         var configuration = new BrowserMenuItem("Configurações", "\uE713");
         configuration.Click += (_, _) => OpenSettings();
         var userName = _access.UserName.Split('\\').Last();
@@ -532,7 +529,7 @@ public sealed class BrowserForm : Form
         protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings,
             new ToolStripSeparator(), protectionStatus });
         _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, newWindow, privateTab,
-            new ToolStripSeparator(), profile, history, downloads, favorites, protection, browserCenter,
+            new ToolStripSeparator(), profile, history, downloads, favorites, protection,
             new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find,
             new ToolStripSeparator(), configuration, _updateItem, exit });
         _overflowMenu.Opening += (_, _) =>
@@ -956,47 +953,39 @@ public sealed class BrowserForm : Form
         }
     }
 
-    private async Task<bool> OpenTabFromBridgeAsync(string url, bool isPrivate)
-    {
-        if (_tabs is null || IsDisposed) return false;
-        try { return await _tabs.CreateAsync(url, isPrivate) is not null; }
-        catch { return false; }
-    }
-
     private void OnPermissionPromptCreated(PermissionPrompt prompt)
     {
-        if (!IsHandleCreated || IsDisposed) return;
-        BeginInvoke(new Action(() => _ = ShowPermissionPromptAsync(prompt)));
+        if (!IsHandleCreated || IsDisposed)
+        {
+            _permissionPolicy.Resolve(prompt.Id, false);
+            return;
+        }
+
+        try { BeginInvoke(new Action(() => ShowPermissionPrompt(prompt))); }
+        catch (InvalidOperationException) { _permissionPolicy.Resolve(prompt.Id, false); }
     }
 
-    private async Task ShowPermissionPromptAsync(PermissionPrompt prompt)
+    private void ShowPermissionPrompt(PermissionPrompt prompt)
     {
-        foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
+        if (IsDisposed || Disposing)
         {
-            if (TrustedBrowserBridge.PublishPermissionPrompt(tab.Web.CoreWebView2, prompt)) return;
+            _permissionPolicy.Resolve(prompt.Id, false);
+            return;
         }
 
-        if (_permissionCenterOpening) return;
-        _permissionCenterOpening = true;
-        try { await OpenTabAsync(TrustedBrowserBridge.UiUrl); }
-        finally { _permissionCenterOpening = false; }
-    }
-
-    private bool SaveBookmarkFromBridge(string url, string title)
-    {
-        try
+        var permission = prompt.Kind switch
         {
-            _bookmarks.Add(url, title);
-            RefreshBookmarksBar();
-            _omnibox.SetFavorite(IsFavorite(_core?.Source ?? ""));
-            _settingsTab?.ReloadBookmarks();
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException or InvalidDataException)
-        {
-            MessageBox.Show(this, "Não foi possível salvar o favorito.", "Favoritos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return false;
-        }
+            "Camera" => "câmera",
+            "Microphone" => "microfone",
+            "Geolocation" => "localização",
+            "Notifications" => "notificações",
+            _ => prompt.Kind
+        };
+        var allow = MessageBox.Show(this,
+            $"{prompt.Origin} solicita acesso a {permission}.\n\nDeseja permitir somente desta vez?",
+            "Permissão do site", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+        _permissionPolicy.Resolve(prompt.Id, allow);
     }
 
     private void OnBrandClicked()
@@ -1323,11 +1312,7 @@ public sealed class BrowserForm : Form
             tab.PermissionSubscription = _permissionPolicy.Attach(tab.Web);
             if (!tab.IsPrivate)
                 await _permissionPolicy.ResetPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
-            TrustedBrowserBridge.Attach(tab.Web, new TrustedBrowserBridgeHandlers(
-                url => OpenTabFromBridgeAsync(url, tab.IsPrivate),
-                SaveBookmarkFromBridge,
-                _permissionPolicy.GetPending,
-                _permissionPolicy.Resolve));
+            TrustedBrowserBridge.Attach(tab.Web);
             await _adProtection.InitializeAsync(tab.Web.CoreWebView2, userData);
             if (tab.IsDisposed || IsDisposed) return;
             await tab.DocumentProtection.SetEnabledAsync(tab.Web.CoreWebView2, _adProtection.Enabled);
