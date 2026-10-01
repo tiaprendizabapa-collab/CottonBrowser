@@ -23,11 +23,6 @@ public sealed class BrowserForm : Form
     private readonly ToolButton _back     = new("\uE72B", "Voltar");
     private readonly ToolButton _forward  = new("\uE72A", "Avancar");
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
-    private readonly ToolButton _inspect  = new("\uEC7A", "Inspecionar página (F12)", 112)
-    {
-        Text = "Inspecionar",
-        Cursor = Cursors.Hand
-    };
     private readonly Omnibox    _omnibox  = new();
     private readonly SuggestionPanel _suggestionPanel = new();
     private readonly NavigationHistoryStore _navigationHistory = new(Path.Combine(
@@ -360,9 +355,6 @@ public sealed class BrowserForm : Form
             if (_loading) _core?.Stop();
             else          _core?.Reload();
         };
-        _inspect.Click += (_, _) => OpenInspector();
-        _inspect.Enabled = false;
-        _zoomTip.SetToolTip(_inspect, "Inspecionar página (F12)");
         _omnibox.Favorite.Click += (_, _) => AddBookmark();
         _omnibox.Zoom.Click += (_, _) => ChangeZoom(0);
         _zoomTip.SetToolTip(_omnibox.Zoom, "Redefinir zoom para 100%");
@@ -395,7 +387,6 @@ public sealed class BrowserForm : Form
         _toolbar.Controls.Add(_forward);
         _toolbar.Controls.Add(_reload);
         _toolbar.Controls.Add(_omnibox);
-        _toolbar.Controls.Add(_inspect);
 
         _toolbar.Resize += (_, _) => LayoutToolbar();
         _toolbar.LocationChanged += (_, _) => LayoutSuggestions();
@@ -427,9 +418,7 @@ public sealed class BrowserForm : Form
         var overflowWidth = ReferenceEquals(_overflowButton.Parent, _toolbar)
             ? _overflowButton.Width + gap
             : 0;
-        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin - overflowWidth
-            - gap - _inspect.Width);
-        _inspect.Location = new Point(_omnibox.Right + gap, y);
+        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin - overflowWidth);
         if (overflowWidth > 0)
             _overflowButton.Location = new Point(_toolbar.Width - margin - _overflowButton.Width,
                 (_toolbar.Height - _overflowButton.Height) / 2);
@@ -1213,7 +1202,6 @@ public sealed class BrowserForm : Form
         SetLoading(_tabs?.Active?.Loading == true);
         _back.Enabled = _core?.CanGoBack == true;
         _forward.Enabled = _core?.CanGoForward == true;
-        _inspect.Enabled = _core is not null;
         var url = _core?.Source ?? "";
         ShowUrl(url);
         UpdateBookmarkItemsVisibility();
