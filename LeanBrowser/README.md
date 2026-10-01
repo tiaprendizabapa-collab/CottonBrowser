@@ -60,6 +60,12 @@ O WebView2 Runtime ainda precisa estar disponível no Windows.
 | `Alt+←` / `Alt+→` | Voltar / Avançar |
 | `Alt+Home` | Página inicial |
 | `Ctrl+Shift+A` | Ligar/desligar o bloqueador |
+| `F12` / `Ctrl+Shift+I` | Abrir o inspetor da guia atual |
+
+O botão **Inspecionar** ao lado da barra de endereços e a opção **Inspecionar
+página** no menu de três pontos abrem o DevTools do WebView2. Clique com o
+botão direito na página e escolha **Inspecionar** para examinar um elemento.
+O WebView2 abre o DevTools em uma janela separada.
 
 ---
 

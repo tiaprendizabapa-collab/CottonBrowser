@@ -23,6 +23,11 @@ public sealed class BrowserForm : Form
     private readonly ToolButton _back     = new("\uE72B", "Voltar");
     private readonly ToolButton _forward  = new("\uE72A", "Avancar");
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
+    private readonly ToolButton _inspect  = new("\uEC7A", "Inspecionar página (F12)", 112)
+    {
+        Text = "Inspecionar",
+        Cursor = Cursors.Hand
+    };
     private readonly Omnibox    _omnibox  = new();
     private readonly SuggestionPanel _suggestionPanel = new();
     private readonly NavigationHistoryStore _navigationHistory = new(Path.Combine(
@@ -103,6 +108,7 @@ public sealed class BrowserForm : Form
     private int _brandClickCount;
     private long _lastBrandClick;
     private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _newTabContextItems = new();
+    private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _inspectContextItems = new();
     private readonly Dictionary<CoreWebView2, string> _contextMenuLinks = new();
     private WebView2? _web => _tabs?.Active?.Web;
     private AdBlocker? _blocker => _tabs?.Active?.Blocker;
@@ -335,6 +341,9 @@ public sealed class BrowserForm : Form
             if (_loading) _core?.Stop();
             else          _core?.Reload();
         };
+        _inspect.Click += (_, _) => OpenInspector();
+        _inspect.Enabled = false;
+        _zoomTip.SetToolTip(_inspect, "Inspecionar página (F12)");
         _omnibox.Favorite.Click += (_, _) => AddBookmark();
         _omnibox.Zoom.Click += (_, _) => ChangeZoom(0);
         _zoomTip.SetToolTip(_omnibox.Zoom, "Redefinir zoom para 100%");
@@ -367,6 +376,7 @@ public sealed class BrowserForm : Form
         _toolbar.Controls.Add(_forward);
         _toolbar.Controls.Add(_reload);
         _toolbar.Controls.Add(_omnibox);
+        _toolbar.Controls.Add(_inspect);
 
         _toolbar.Resize += (_, _) => LayoutToolbar();
         _toolbar.LocationChanged += (_, _) => LayoutSuggestions();
@@ -398,7 +408,9 @@ public sealed class BrowserForm : Form
         var overflowWidth = ReferenceEquals(_overflowButton.Parent, _toolbar)
             ? _overflowButton.Width + gap
             : 0;
-        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin - overflowWidth);
+        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin - overflowWidth
+            - gap - _inspect.Width);
+        _inspect.Location = new Point(_omnibox.Right + gap, y);
         if (overflowWidth > 0)
             _overflowButton.Location = new Point(_toolbar.Width - margin - _overflowButton.Width,
                 (_toolbar.Height - _overflowButton.Height) / 2);
@@ -498,6 +510,8 @@ public sealed class BrowserForm : Form
         print.Click += (_, _) => PrintCurrentPage();
         var find = new BrowserMenuItem("Localizar na página…", "\uE721", "Ctrl+F");
         find.Click += async (_, _) => await FindInCurrentPageAsync();
+        var inspect = new BrowserMenuItem("Inspecionar página", "\uEC7A", "F12");
+        inspect.Click += (_, _) => OpenInspector();
         var exit = new BrowserMenuItem("Sair", "\uE8BB");
         exit.Click += (_, _) => Close();
         _updateBanner.Click += async (_, _) =>
@@ -542,12 +556,13 @@ public sealed class BrowserForm : Form
             new ToolStripSeparator(), protectionStatus });
         _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, newWindow, privateTab,
             new ToolStripSeparator(), profile, history, downloads, media, favorites, protection, browserCenter,
-            new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find,
+            new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find, inspect,
             new ToolStripSeparator(), configuration, _updateItem, exit });
         _overflowMenu.Opening += (_, _) =>
         {
             var ready = _tabs?.Active?.Navigation.IsReady == true;
             print.Enabled = find.Enabled = ready;
+            inspect.Enabled = _core is not null;
             history.Enabled = _tabs?.Active?.IsPrivate != true;
             media.Enabled = MediaDownloadService.IsSupportedPageUrl(_core?.Source);
             _menuZoom.SetState(_web?.ZoomFactor ?? 1, ready, _windowFullscreen);
@@ -1149,6 +1164,7 @@ public sealed class BrowserForm : Form
         SetLoading(_tabs?.Active?.Loading == true);
         _back.Enabled = _core?.CanGoBack == true;
         _forward.Enabled = _core?.CanGoForward == true;
+        _inspect.Enabled = _core is not null;
         var url = _core?.Source ?? "";
         ShowUrl(url);
         UpdateBookmarkItemsVisibility();
@@ -1507,6 +1523,7 @@ public sealed class BrowserForm : Form
         tab.Disposed += (_, _) =>
         {
             _newTabContextItems.Remove(core);
+            _inspectContextItems.Remove(core);
             _contextMenuLinks.Remove(core);
         };
         var faviconRequest = 0;
@@ -1626,7 +1643,11 @@ public sealed class BrowserForm : Form
         {
             if (_tabs?.Active == tab && !IsDisposed) ShowZoom(tab.Web.ZoomFactor);
         };
-        core.ContextMenuRequested += (_, e) => ReplaceOpenInNewWindowCommand(tab, e);
+        core.ContextMenuRequested += (_, e) =>
+        {
+            ReplaceOpenInNewWindowCommand(tab, e);
+            EnsureInspectContextMenuItem(tab, e);
+        };
         core.NewWindowRequested += (_, e) =>
         {
             e.Handled = true;
@@ -1815,6 +1836,42 @@ public sealed class BrowserForm : Form
         ReplaceContextMenuItem(e.MenuItems, newTabItem);
     }
 
+    private void EnsureInspectContextMenuItem(BrowserTab tab, CoreWebView2ContextMenuRequestedEventArgs e)
+    {
+        // O WebView2 pode omitir a entrada nativa em alguns tipos de página.
+        if (ContainsInspectContextMenuItem(e.MenuItems)) return;
+
+        var core = tab.Web.CoreWebView2;
+        if (!_inspectContextItems.TryGetValue(core, out var inspectItem))
+        {
+            inspectItem = core.Environment.CreateContextMenuItem(
+                "Inspecionar página", null, CoreWebView2ContextMenuItemKind.Command);
+            inspectItem.CustomItemSelected += (_, _) =>
+            {
+                if (tab.IsDisposed || IsDisposed) return;
+                BeginInvoke(new Action(() =>
+                {
+                    if (!tab.IsDisposed && !IsDisposed) OpenInspector(core);
+                }));
+            };
+            _inspectContextItems[core] = inspectItem;
+        }
+
+        e.MenuItems.Add(inspectItem);
+    }
+
+    private static bool ContainsInspectContextMenuItem(IList<CoreWebView2ContextMenuItem> items)
+    {
+        foreach (var item in items)
+        {
+            if (item.Name.StartsWith("inspect", StringComparison.OrdinalIgnoreCase) ||
+                item.Children is { Count: > 0 } children && ContainsInspectContextMenuItem(children))
+                return true;
+        }
+
+        return false;
+    }
+
     private static bool ReplaceContextMenuItem(
         IList<CoreWebView2ContextMenuItem> items,
         CoreWebView2ContextMenuItem replacement)
@@ -1884,7 +1941,7 @@ public sealed class BrowserForm : Form
             ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
         var s = core.Settings;
 
-        s.AreDevToolsEnabled          = false; // sem frontend de devtools carregado
+        s.AreDevToolsEnabled          = true;
         s.IsStatusBarEnabled          = false; // remove um popup/HWND
         // BrowserTabManager já aplicou o preenchimento automático ao perfil.
         s.IsSwipeNavigationEnabled    = false;
@@ -2143,6 +2200,22 @@ public sealed class BrowserForm : Form
 
     // --------------------------------------------------------- Atalhos -----
 
+    private void OpenInspector()
+    {
+        if (_core is { } core) OpenInspector(core);
+    }
+
+    private void OpenInspector(CoreWebView2 core)
+    {
+        try { core.OpenDevToolsWindow(); }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        {
+            MessageBox.Show(this, "Não foi possível abrir o inspetor desta guia.\n\n" + ex.Message,
+                "Inspecionar página", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void OnWebKeyDown(object? sender, KeyEventArgs e)
     {
         var key = e.KeyCode;
@@ -2152,10 +2225,10 @@ public sealed class BrowserForm : Form
         var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D
             || (key == Keys.J && !shift && !alt) || key is Keys.Oemplus or Keys.Add or Keys.OemMinus or Keys.Subtract or Keys.D0 or Keys.NumPad0))
             || (ctrl && !shift && !alt && key == Keys.N)
-            || (ctrl && shift && (key == Keys.A || key == Keys.N))
+            || (ctrl && shift && (key == Keys.A || key == Keys.N || key == Keys.I))
             || (ctrl && shift && alt && _access.IsAdvancedMode && key == Keys.M)
             || (alt && (key == Keys.D || key == Keys.Left || key == Keys.Right || key == Keys.Home))
-            || key is Keys.F5 or Keys.F11
+            || key is Keys.F5 or Keys.F11 or Keys.F12
             || (key == Keys.Escape && !ActivePageIsFullscreen() && (_browserFullscreen || _loading));
 
         if (!isShortcut) return;
@@ -2181,6 +2254,10 @@ public sealed class BrowserForm : Form
     {
         switch (key)
         {
+            case Keys.F12 when !ctrl && !shift && !alt:
+            case Keys.I when ctrl && shift && !alt:
+                OpenInspector();
+                return true;
             case Keys.M when ctrl && shift && alt && _access.IsAdvancedMode:
                 _ = OpenAdminDashboardAsync();
                 return true;
