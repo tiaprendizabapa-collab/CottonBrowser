@@ -197,7 +197,29 @@ public sealed class NetworkProtection : IDisposable
         // The request has not reached the network yet. Cancel it, obtain an
         // explicit decision, then navigate again only if it is still current.
         args.Cancel = true;
-        _ = ResolveInsecureNavigationAsync(args.Uri, target, epoch);
+        QueueInsecureNavigation(args.Uri, target, epoch);
+    }
+
+    private void QueueInsecureNavigation(string requestUri, Uri target, long epoch)
+    {
+        if (_control.IsDisposed || !_control.IsHandleCreated) return;
+        try
+        {
+            // Return from NavigationStarting before showing a modal dialog or
+            // starting another navigation. WebView2 still owns the canceled
+            // navigation until the event callback returns.
+            _control.BeginInvoke((Action)(() =>
+            {
+                if (Volatile.Read(ref _disposed) == 0 &&
+                    epoch == Volatile.Read(ref _navigationEpoch) && !_control.IsDisposed)
+                    _ = ResolveInsecureNavigationAsync(requestUri, target, epoch);
+            }));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        {
+            // The tab may close before the confirmation can be shown.
+        }
     }
 
     private async Task ResolveInsecureNavigationAsync(string requestUri, Uri target, long epoch)
@@ -247,12 +269,8 @@ public sealed class NetworkProtection : IDisposable
 
         if (Volatile.Read(ref _disposed) != 0 || _control.IsDisposed || !_control.IsHandleCreated)
             return;
-        if (!_control.InvokeRequired)
-        {
-            NavigateIfCurrent();
-            return;
-        }
-
+        // Always post the retry. A synchronous confirmation on the UI thread
+        // must fully unwind before Navigate starts the approved request.
         try { _control.BeginInvoke((Action)NavigateIfCurrent); }
         catch (Exception ex) when (ex is InvalidOperationException
             or System.Runtime.InteropServices.COMException)
