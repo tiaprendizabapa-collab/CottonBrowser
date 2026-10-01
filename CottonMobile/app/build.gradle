@@ -18,7 +18,8 @@ android {
         minSdk 26
         targetSdk 35
         versionCode mobileVersionCode
-        versionName "0.1.0-preview.${mobileVersionCode}"
+        versionName "0.2.0-preview.${mobileVersionCode}"
+        resValue 'string', 'source_commit', System.getenv('GITHUB_SHA') ?: 'local'
     }
 
     buildTypes {

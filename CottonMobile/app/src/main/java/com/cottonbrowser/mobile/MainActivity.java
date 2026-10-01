@@ -51,6 +51,9 @@ import android.widget.PopupMenu;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.CheckBox;
+import android.text.Editable;
+import android.text.TextWatcher;
 
 import androidx.webkit.ScriptHandler;
 import androidx.webkit.WebViewCompat;
@@ -65,7 +68,9 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URLEncoder;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import javax.net.ssl.HttpsURLConnection;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -89,10 +94,18 @@ public final class MainActivity extends Activity {
     private static final int MAX_SELECTED_FILES = 16;
     private static final String PREFS_NAME = "cotton_mobile";
     private static final String BOOKMARKS_KEY = "bookmarks";
+    private static final String HISTORY_KEY = "history";
+    private static final int MAX_HISTORY_ENTRIES = 200;
+    private static final String UPDATE_NOTICES_KEY = "suppress_update_notices";
+    private static final String UPDATE_CHECK_TIME_KEY = "last_update_check";
+    private static final String RELEASES_URL = "https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/latest";
+    private static final String RELEASES_API = "https://api.github.com/repos/tiaprendizabapa-collab/CottonBrowser";
     private static final String PROTECTION_EXCEPTIONS_KEY = "protection_exceptions";
 
     private final List<BrowserTab> tabs = new ArrayList<>();
     private final List<Bookmark> bookmarks = new ArrayList<>();
+    private final List<HistoryEntry> history = new ArrayList<>();
+    private final Set<String> approvedHttpOrigins = new HashSet<>();
     private volatile BrowserTab activeTab;
     private AdBlocker adBlocker;
     private volatile Set<String> protectionExceptions = Collections.emptySet();
@@ -108,6 +121,15 @@ public final class MainActivity extends Activity {
     private TextView bookmarkButton;
     private ImageView protectionButton;
     private ProgressBar progressBar;
+    private HorizontalScrollView bookmarksScroller;
+    private LinearLayout bookmarksRow;
+    private LinearLayout findBar;
+    private EditText findInput;
+    private TextView findCount;
+    private LinearLayout updateCard;
+    private TextView updateMessage;
+    private CheckBox suppressUpdateNotice;
+    private String availableUpdateTag;
     private ValueCallback<Uri[]> fileChooserCallback;
     private boolean fileChooserAllowsMultiple;
 
@@ -118,6 +140,7 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(HEADER);
         WebView.setWebContentsDebuggingEnabled(false);
         readBookmarks();
+        readHistory();
         readProtectionExceptions();
         adBlocker = AdBlocker.load(this);
         // Service workers can fetch resources outside a tab's WebViewClient.
@@ -135,6 +158,7 @@ public final class MainActivity extends Activity {
         buildInterface();
         addTab(null, true);
         if (adBlocker.getDomainCount() == 0) toast("Lista de bloqueio indisponível nesta instalação");
+        checkForUpdates();
     }
 
     private void buildInterface() {
@@ -250,9 +274,103 @@ public final class MainActivity extends Activity {
         progressBar.setVisibility(View.INVISIBLE);
         root.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(2)));
 
+        bookmarksScroller = new HorizontalScrollView(this);
+        bookmarksScroller.setHorizontalScrollBarEnabled(false);
+        bookmarksScroller.setBackgroundColor(HEADER);
+        bookmarksRow = new LinearLayout(this);
+        bookmarksRow.setGravity(Gravity.CENTER_VERTICAL);
+        bookmarksRow.setPadding(dp(8), 0, dp(8), 0);
+        bookmarksScroller.addView(bookmarksRow, new HorizontalScrollView.LayoutParams(-2, -1));
+        root.addView(bookmarksScroller, new LinearLayout.LayoutParams(-1, dp(38)));
+        renderBookmarksBar();
+
+        findBar = new LinearLayout(this);
+        findBar.setGravity(Gravity.CENTER_VERTICAL);
+        findBar.setPadding(dp(8), dp(3), dp(8), dp(3));
+        findBar.setBackgroundColor(HEADER);
+        findBar.setVisibility(View.GONE);
+        findInput = new EditText(this);
+        findInput.setSingleLine(true);
+        findInput.setTextSize(14);
+        findInput.setTextColor(TEXT);
+        findInput.setHintTextColor(MUTED);
+        findInput.setHint("Localizar na página");
+        findInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        findBar.addView(findInput, new LinearLayout.LayoutParams(0, dp(42), 1));
+        findCount = text("", 12, MUTED);
+        findBar.addView(findCount, new LinearLayout.LayoutParams(dp(58), -2));
+        TextView previousMatch = toolbarButton("↑", "Ocorrência anterior");
+        TextView nextMatch = toolbarButton("↓", "Próxima ocorrência");
+        TextView closeFind = toolbarButton("×", "Fechar busca");
+        findBar.addView(previousMatch, new LinearLayout.LayoutParams(dp(34), dp(38)));
+        findBar.addView(nextMatch, new LinearLayout.LayoutParams(dp(34), dp(38)));
+        findBar.addView(closeFind, new LinearLayout.LayoutParams(dp(34), dp(38)));
+        root.addView(findBar, new LinearLayout.LayoutParams(-1, dp(48)));
+        findInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (activeTab == null) return;
+                if (s.length() == 0) {
+                    activeTab.webView.clearMatches();
+                    findCount.setText("");
+                } else activeTab.webView.findAllAsync(s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) { }
+        });
+        findInput.setOnEditorActionListener((view, actionId, event) -> {
+            if (activeTab == null) return false;
+            activeTab.webView.findNext(true);
+            return true;
+        });
+        previousMatch.setOnClickListener(view -> {
+            if (activeTab != null) activeTab.webView.findNext(false);
+        });
+        nextMatch.setOnClickListener(view -> {
+            if (activeTab != null) activeTab.webView.findNext(true);
+        });
+        closeFind.setOnClickListener(view -> hideFindBar());
+
         pageHost = new FrameLayout(this);
         pageHost.setBackgroundColor(BACKGROUND);
         root.addView(pageHost, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        updateCard = new LinearLayout(this);
+        updateCard.setOrientation(LinearLayout.VERTICAL);
+        updateCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        updateCard.setBackground(rounded(SURFACE_ACTIVE, 16));
+        updateCard.setElevation(dp(9));
+        updateCard.setVisibility(View.GONE);
+        TextView updateTitle = text("Atualização disponível", 16, TEXT);
+        updateTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        updateCard.addView(updateTitle);
+        updateMessage = text("", 13, MUTED);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(-1, -2);
+        messageParams.topMargin = dp(6);
+        updateCard.addView(updateMessage, messageParams);
+        suppressUpdateNotice = new CheckBox(this);
+        suppressUpdateNotice.setText("Não mostrar novamente");
+        suppressUpdateNotice.setTextColor(TEXT);
+        suppressUpdateNotice.setTextSize(13);
+        updateCard.addView(suppressUpdateNotice);
+        LinearLayout updateActions = new LinearLayout(this);
+        updateActions.setGravity(Gravity.END);
+        TextView later = text("Depois", 14, TEXT);
+        TextView viewUpdate = text("Ver atualização", 14, ACCENT);
+        later.setPadding(dp(12), dp(8), dp(12), dp(8));
+        viewUpdate.setPadding(dp(12), dp(8), dp(12), dp(8));
+        updateActions.addView(later);
+        updateActions.addView(viewUpdate);
+        updateCard.addView(updateActions);
+        FrameLayout.LayoutParams updateParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        updateParams.setMargins(dp(12), dp(12), dp(12), dp(12));
+        pageHost.addView(updateCard, updateParams);
+        later.setOnClickListener(view -> dismissUpdateNotice());
+        viewUpdate.setOnClickListener(view -> {
+            String tag = availableUpdateTag;
+            dismissUpdateNotice();
+            addTab(tag == null ? RELEASES_URL
+                    : "https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/tag/" + tag, true);
+        });
     }
 
     private TextView toolbarButton(String symbol, String description) {
@@ -286,6 +404,7 @@ public final class MainActivity extends Activity {
         tab.page.setVisibility(View.GONE);
         tabs.add(tab);
         pageHost.addView(tab.page, new FrameLayout.LayoutParams(-1, -1));
+        if (updateCard.getVisibility() == View.VISIBLE) updateCard.bringToFront();
         if (activate) selectTab(tab);
         else renderTabs();
         if (url != null) navigate(tab, url);
@@ -314,6 +433,10 @@ public final class MainActivity extends Activity {
         settings.setDisplayZoomControls(false);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
         installYouTubeProtection(tab, webView);
+        webView.setFindListener((activeMatch, totalMatches, finished) -> {
+            if (tab == activeTab && findBar.getVisibility() == View.VISIBLE)
+                findCount.setText(totalMatches == 0 ? "0" : (activeMatch + 1) + "/" + totalMatches);
+        });
         webView.setWebViewClient(new BrowserClient(tab));
         webView.setWebChromeClient(new BrowserChrome(tab));
         webView.setDownloadListener(downloadListener());
@@ -400,6 +523,7 @@ public final class MainActivity extends Activity {
     private void selectTab(BrowserTab tab) {
         if (activeTab == tab) return;
         if (activeTab != null) {
+            hideFindBar();
             activeTab.webView.onPause();
             activeTab.page.setVisibility(View.GONE);
         }
@@ -414,6 +538,7 @@ public final class MainActivity extends Activity {
         int index = tabs.indexOf(tab);
         if (index < 0) return;
         boolean wasActive = activeTab == tab;
+        if (wasActive) hideFindBar();
         tabs.remove(index);
         if (wasActive) activeTab = null;
         pageHost.removeView(tab.page);
@@ -497,12 +622,33 @@ public final class MainActivity extends Activity {
 
     private void navigate(BrowserTab tab, String url) {
         if (!isWebUrl(url)) return;
+        tab.navigationToken++;
+        if (warnBeforeHttp(tab, url, () -> navigate(tab, url))) return;
         tab.url = url;
         tab.error.setVisibility(View.GONE);
         tab.home.setVisibility(View.GONE);
         tab.webView.setVisibility(View.VISIBLE);
         tab.webView.loadUrl(url);
         if (tab == activeTab) updateControls();
+    }
+
+    private boolean warnBeforeHttp(BrowserTab tab, String url, Runnable continueNavigation) {
+        Uri uri = Uri.parse(url);
+        if (!"http".equalsIgnoreCase(uri.getScheme())) return false;
+        String origin = uri.getHost() + ":" + uri.getPort();
+        if (approvedHttpOrigins.contains(origin)) return false;
+        int token = tab.navigationToken;
+        new AlertDialog.Builder(this)
+                .setTitle("Conexão não segura")
+                .setMessage(uri.getHost() + " usa HTTP sem criptografia. Dados enviados à página podem ser interceptados. Deseja continuar nesta sessão?")
+                .setPositiveButton("Continuar", (dialog, button) -> {
+                    if (!tabs.contains(tab) || token != tab.navigationToken) return;
+                    approvedHttpOrigins.add(origin);
+                    continueNavigation.run();
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
+        return true;
     }
 
     private void showHome() {
@@ -541,13 +687,65 @@ public final class MainActivity extends Activity {
                     : "Proteção desativada neste site");
     }
 
+    private void showFindBar() {
+        if (activeTab == null || activeTab.url == null) {
+            toast("Abra uma página para localizar texto");
+            return;
+        }
+        findBar.setVisibility(View.VISIBLE);
+        findInput.requestFocus();
+        findInput.selectAll();
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        keyboard.showSoftInput(findInput, InputMethodManager.SHOW_IMPLICIT);
+    }
+
+    private void hideFindBar() {
+        if (findBar == null || findBar.getVisibility() == View.GONE) return;
+        if (activeTab != null) activeTab.webView.clearMatches();
+        findBar.setVisibility(View.GONE);
+        findInput.setText("");
+        findInput.clearFocus();
+        findCount.setText("");
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        keyboard.hideSoftInputFromWindow(findInput.getWindowToken(), 0);
+    }
+
+    private void renderBookmarksBar() {
+        if (bookmarksRow == null) return;
+        bookmarksRow.removeAllViews();
+        bookmarksScroller.setVisibility(bookmarks.isEmpty() ? View.GONE : View.VISIBLE);
+        for (Bookmark bookmark : bookmarks) {
+            String label = bookmark.title.length() > 22
+                    ? bookmark.title.substring(0, 21) + "…" : bookmark.title;
+            TextView chip = text("★  " + label, 12, TEXT);
+            chip.setSingleLine(true);
+            chip.setGravity(Gravity.CENTER_VERTICAL);
+            chip.setPadding(dp(11), 0, dp(11), 0);
+            chip.setBackground(rounded(SURFACE, 12));
+            chip.setContentDescription("Abrir favorito " + bookmark.title);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(30));
+            params.setMargins(dp(3), 0, dp(3), 0);
+            bookmarksRow.addView(chip, params);
+            chip.setOnClickListener(view -> {
+                if (activeTab != null) navigate(activeTab, bookmark.url);
+            });
+            chip.setOnLongClickListener(view -> { showRemoveBookmarks(); return true; });
+        }
+    }
+
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
         menu.getMenu().add(0, 1, 0, "Nova guia");
         menu.getMenu().add(0, 2, 1, "Favoritos");
         menu.getMenu().add(0, 3, 2, "Adicionar aos favoritos");
-        menu.getMenu().add(0, 4, 3, "Página inicial");
-        menu.getMenu().add(0, 5, 4, "Proteção deste site");
+        menu.getMenu().add(0, 6, 3, "Histórico recente");
+        menu.getMenu().add(0, 7, 4, "Downloads");
+        menu.getMenu().add(0, 8, 5, "Localizar na página");
+        menu.getMenu().add(0, 9, 6, "Compartilhar página");
+        menu.getMenu().add(0, 10, 7, "Baixar mídia direta da página");
+        menu.getMenu().add(0, 4, 8, "Página inicial");
+        menu.getMenu().add(0, 5, 9, "Proteção deste site");
+        menu.getMenu().add(0, 11, 10, "Ver atualizações");
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 1: addTab(null, true); return true;
@@ -555,10 +753,92 @@ public final class MainActivity extends Activity {
                 case 3: toggleBookmark(); return true;
                 case 4: showHome(); return true;
                 case 5: showProtectionDialog(); return true;
+                case 6: showHistory(); return true;
+                case 7: showDownloads(); return true;
+                case 8: showFindBar(); return true;
+                case 9: sharePage(); return true;
+                case 10: downloadPageMedia(); return true;
+                case 11: addTab(RELEASES_URL, true); return true;
                 default: return false;
             }
         });
         menu.show();
+    }
+
+    private void checkForUpdates() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String installedCommit = getString(R.string.source_commit);
+        if (prefs.getBoolean(UPDATE_NOTICES_KEY, false) || !installedCommit.matches("[0-9a-fA-F]{40}"))
+            return;
+        if (System.currentTimeMillis() - prefs.getLong(UPDATE_CHECK_TIME_KEY, 0) < 6 * 60 * 60 * 1000L)
+            return;
+
+        new Thread(() -> {
+            try {
+                JSONObject release = fetchReleaseJson("/releases/latest");
+                String tag = release.getString("tag_name");
+                if (!tag.matches("v[0-9]+\\.[0-9]+\\.[0-9]+")) return;
+                JSONArray assets = release.getJSONArray("assets");
+                boolean hasMobileApk = false;
+                for (int i = 0; i < assets.length(); i++) {
+                    if ("CottonBrowser-Android-preview.apk".equals(assets.getJSONObject(i).optString("name"))) {
+                        hasMobileApk = true;
+                        break;
+                    }
+                }
+                if (!hasMobileApk) return;
+                JSONObject reference = fetchReleaseJson("/git/ref/tags/" + tag);
+                JSONObject object = reference.getJSONObject("object");
+                if (!"commit".equals(object.optString("type"))) return;
+                String latestCommit = object.getString("sha");
+                prefs.edit().putLong(UPDATE_CHECK_TIME_KEY, System.currentTimeMillis()).apply();
+                if (!latestCommit.equalsIgnoreCase(installedCommit))
+                    runOnUiThread(() -> showUpdateNotice(tag));
+            } catch (Exception ignored) {
+                // Offline or rate-limited devices can check manually from the menu.
+            }
+        }, "CottonBrowser-update-check").start();
+    }
+
+    private static JSONObject fetchReleaseJson(String endpoint) throws IOException, JSONException {
+        HttpsURLConnection connection = (HttpsURLConnection) new URL(RELEASES_API + endpoint).openConnection();
+        connection.setConnectTimeout(4000);
+        connection.setReadTimeout(4000);
+        connection.setInstanceFollowRedirects(false);
+        connection.setRequestProperty("Accept", "application/vnd.github+json");
+        connection.setRequestProperty("User-Agent", "CottonBrowser-Android");
+        try {
+            if (connection.getResponseCode() != 200) throw new IOException("GitHub indisponível");
+            StringBuilder body = new StringBuilder();
+            try (InputStreamReader reader = new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)) {
+                char[] chunk = new char[2048];
+                int read;
+                while ((read = reader.read(chunk)) > 0) {
+                    body.append(chunk, 0, read);
+                    if (body.length() > 65536) throw new IOException("Resposta de atualização muito grande");
+                }
+            }
+            return new JSONObject(body.toString());
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private void showUpdateNotice(String tag) {
+        if (isFinishing() || isDestroyed() ||
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(UPDATE_NOTICES_KEY, false)) return;
+        availableUpdateTag = tag;
+        updateMessage.setText("CottonBrowser " + tag + " está disponível para Android.");
+        suppressUpdateNotice.setChecked(false);
+        updateCard.setVisibility(View.VISIBLE);
+        updateCard.bringToFront();
+    }
+
+    private void dismissUpdateNotice() {
+        if (suppressUpdateNotice.isChecked())
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(UPDATE_NOTICES_KEY, true).apply();
+        updateCard.setVisibility(View.GONE);
     }
 
     private void readProtectionExceptions() {
@@ -757,6 +1037,118 @@ public final class MainActivity extends Activity {
             } catch (JSONException ignored) { }
         }
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(BOOKMARKS_KEY, array.toString()).apply();
+        renderBookmarksBar();
+    }
+
+    private void readHistory() {
+        history.clear();
+        try {
+            JSONArray array = new JSONArray(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getString(HISTORY_KEY, "[]"));
+            for (int i = 0; i < array.length() && history.size() < MAX_HISTORY_ENTRIES; i++) {
+                JSONObject item = array.getJSONObject(i);
+                String url = item.optString("url");
+                if (isWebUrl(url)) history.add(new HistoryEntry(url, item.optString("title", url)));
+            }
+        } catch (JSONException ignored) {
+            // An invalid local record does not block the browser.
+        }
+    }
+
+    private void recordHistory(String url, String title) {
+        if (!isWebUrl(url)) return;
+        if (!history.isEmpty() && history.get(0).url.equals(url)) {
+            history.set(0, new HistoryEntry(url, title));
+        } else {
+            history.add(0, new HistoryEntry(url, title));
+            while (history.size() > MAX_HISTORY_ENTRIES) history.remove(history.size() - 1);
+        }
+        JSONArray array = new JSONArray();
+        for (HistoryEntry entry : history) {
+            try {
+                JSONObject item = new JSONObject();
+                item.put("url", entry.url);
+                item.put("title", entry.title);
+                array.put(item);
+            } catch (JSONException ignored) { }
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(HISTORY_KEY, array.toString()).apply();
+    }
+
+    private void showHistory() {
+        if (history.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Histórico")
+                    .setMessage("As páginas visitadas aparecerão aqui.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        int count = Math.min(50, history.size());
+        String[] labels = new String[count];
+        for (int i = 0; i < count; i++) {
+            HistoryEntry entry = history.get(i);
+            labels[i] = entry.title + "\n" + Uri.parse(entry.url).getHost();
+        }
+        new AlertDialog.Builder(this).setTitle("Histórico recente")
+                .setItems(labels, (dialog, index) -> {
+                    if (activeTab != null) navigate(activeTab, history.get(index).url);
+                })
+                .setNeutralButton("Limpar", (dialog, which) -> new AlertDialog.Builder(this)
+                        .setTitle("Limpar histórico?")
+                        .setMessage("As páginas salvas no histórico deste aparelho serão removidas.")
+                        .setPositiveButton("Limpar", (confirm, button) -> {
+                            history.clear();
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                                    .remove(HISTORY_KEY).apply();
+                            for (BrowserTab tab : tabs) tab.webView.clearHistory();
+                        })
+                        .setNegativeButton("Cancelar", null).show())
+                .setNegativeButton("Fechar", null).show();
+    }
+
+    private void showDownloads() {
+        try {
+            startActivity(new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS));
+        } catch (RuntimeException error) {
+            toast("O gerenciador de downloads não está disponível");
+        }
+    }
+
+    private void sharePage() {
+        if (activeTab == null || !isWebUrl(activeTab.url)) {
+            toast("Abra uma página para compartilhar");
+            return;
+        }
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_TEXT, activeTab.url);
+        startActivity(Intent.createChooser(share, "Compartilhar página"));
+    }
+
+    private void downloadPageMedia() {
+        BrowserTab tab = activeTab;
+        if (tab == null || !isWebUrl(tab.url)) {
+            toast("Abra uma página com vídeo ou áudio");
+            return;
+        }
+        // Only a direct HTTP(S) media URL can be handed to Android's DownloadManager.
+        // Blob, DRM and segmented streams require a separate download implementation.
+        tab.webView.evaluateJavascript("(function(){var e=document.querySelector('video,audio');return e?(e.currentSrc||e.src||''):''})()", result -> {
+            if (tab != activeTab) return;
+            String url;
+            try { url = new JSONArray("[" + result + "]").getString(0); }
+            catch (JSONException error) { url = null; }
+            if (!isWebUrl(url)) {
+                toast("Esta página não oferece um arquivo de mídia direto para baixar");
+                return;
+            }
+            String path = Uri.parse(url).getPath();
+            if (path != null && (path.endsWith(".m3u8") || path.endsWith(".mpd"))) {
+                toast("Streams segmentados não são compatíveis com o download direto");
+                return;
+            }
+            downloadListener().onDownloadStart(url, tab.webView.getSettings().getUserAgentString(),
+                    null, null, -1);
+        });
     }
 
     private int findBookmark(String url) {
@@ -864,7 +1256,11 @@ public final class MainActivity extends Activity {
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             if (!request.isForMainFrame()) return false;
             String url = request.getUrl().toString();
-            if (isWebUrl(url) || "about:blank".equals(url)) return false;
+            if (isWebUrl(url)) {
+                tab.navigationToken++;
+                return warnBeforeHttp(tab, url, () -> view.loadUrl(url));
+            }
+            if ("about:blank".equals(url)) return false;
             openExternal(url);
             return true;
         }
@@ -872,10 +1268,15 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             if (!tabs.contains(tab)) return;
+            if (tab == activeTab) hideFindBar();
             tab.loading = true;
             tab.progress = 5;
             tab.blockedCount.set(0);
-            if (isWebUrl(url)) tab.url = url;
+            if (isWebUrl(url)) {
+                tab.url = url;
+                tab.title = Uri.parse(url).getHost();
+                renderTabs();
+            }
             tab.error.setVisibility(View.GONE);
             tab.home.setVisibility(View.GONE);
             tab.webView.setVisibility(View.VISIBLE);
@@ -893,6 +1294,8 @@ public final class MainActivity extends Activity {
             tab.loading = false;
             tab.progress = 100;
             if (isWebUrl(url)) tab.url = url;
+            if (tab.error.getVisibility() != View.VISIBLE)
+                recordHistory(url, tab.title);
             injectYouTubeFallback(view, url);
             if (tab == activeTab) updateControls();
         }
@@ -1037,6 +1440,10 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (findBar != null && findBar.getVisibility() == View.VISIBLE) {
+            hideFindBar();
+            return;
+        }
         if (activeTab != null && activeTab.webView.canGoBack()) activeTab.webView.goBack();
         else if (tabs.size() > 1) closeTab(activeTab);
         else super.onBackPressed();
@@ -1103,6 +1510,16 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class HistoryEntry {
+        final String url;
+        final String title;
+
+        HistoryEntry(String url, String title) {
+            this.url = url;
+            this.title = title == null || title.isEmpty() ? url : title;
+        }
+    }
+
     private static final class BrowserTab {
         FrameLayout page;
         WebView webView;
@@ -1116,5 +1533,6 @@ public final class MainActivity extends Activity {
         ScriptHandler youtubeScriptHandler;
         int progress;
         boolean loading;
+        int navigationToken;
     }
 }
