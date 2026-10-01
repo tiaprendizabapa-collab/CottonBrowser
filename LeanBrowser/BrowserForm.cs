@@ -71,6 +71,8 @@ public sealed class BrowserForm : Form
     private readonly System.Windows.Forms.Timer _updatePoll = new() { Interval = 3 * 60 * 60 * 1000 };
     private readonly BrowserMenuItem _updateItem = new("Atualizar CottonBrowser", "\uE895");
     private readonly BrowserMenuItem _updateBanner = new("Atualização disponível", "\uE895") { IsBanner = true, Visible = false };
+    private readonly UpdateNoticePreferenceStore _updateNoticePreferences = new();
+    private readonly UpdateNoticeCard _updateNotice = new();
     private BrowserUpdate? _availableUpdate;
     private static Version? _offeredUpdateVersion;
     private bool _updateBusy;
@@ -159,8 +161,16 @@ public sealed class BrowserForm : Form
         Font = new Font(Theme.UiFont, 9f);
         DoubleBuffered = true;
         KeyPreview = true;
-        Activated += (_, _) => { if (_windowFullscreen) TopMost = true; };
-        Deactivate += (_, _) => { if (_windowFullscreen) TopMost = false; };
+        Activated += (_, _) =>
+        {
+            if (_windowFullscreen) TopMost = true;
+            UpdateTabMemoryPriorities();
+        };
+        Deactivate += (_, _) =>
+        {
+            if (_windowFullscreen) TopMost = false;
+            UpdateTabMemoryPriorities();
+        };
 
         _overflowDismissFilter = new OverflowDismissFilter(this);
         Application.AddMessageFilter(_overflowDismissFilter);
@@ -201,23 +211,32 @@ public sealed class BrowserForm : Form
         Controls.Add(_toolbar);
         Controls.Add(_tabBar);
         Controls.Add(_suggestionPanel);
+        Controls.Add(_updateNotice);
         _suggestionPanel.BringToFront();
+        _updateNotice.Dismissed += suppress => DismissUpdateNotice(suppress);
+        _updateNotice.UpdateRequested += async suppress =>
+        {
+            if (!DismissUpdateNotice(suppress)) return;
+            if (_availableUpdate is { } update) await InstallUpdateAsync(update);
+        };
         _suggestionPanel.Chosen += NavigateSuggestion;
         _suggestionPanel.Dismissed += DismissSuggestion;
         _suggestionDebounce.Tick += OnSuggestionDebounce;
         _zoomFade.Tick += OnZoomFade;
         _updatePoll.Tick += async (_, _) =>
-            await OfferUpdateAsync(await CheckForUpdatesAsync(manual: false));
+            OfferUpdate(await CheckForUpdatesAsync(manual: false));
 
         // Os controles são criados antes de ler o tema persistido; sincroniza
         // a primeira pintura para que o modo escuro já nasça consistente.
         ApplyThemeRecursive(this);
+        _updateNotice.ApplyTheme();
         _tabView.ApplyTheme();
         _bookmarksBar.ApplyTheme();
         RefreshBookmarksBar();
 
         ResumeLayout(false);
         LayoutTabBar();
+        PositionUpdateNotice();
     }
 
     protected override CreateParams CreateParams
@@ -577,6 +596,7 @@ public sealed class BrowserForm : Form
             _zoomFade.Stop();
             _omnibox.Zoom.Opacity = 0;
             RefreshActiveTab();
+            UpdateTabMemoryPriorities();
         };
     }
 
@@ -640,12 +660,40 @@ public sealed class BrowserForm : Form
         return bounds;
     }
 
+    private void PositionUpdateNotice()
+    {
+        if (_updateNotice.IsDisposed) return;
+        var inset = LogicalToDeviceUnits(16);
+        _updateNotice.Location = new Point(
+            Math.Max(Padding.Left, ClientSize.Width - _updateNotice.Width - inset),
+            Math.Max(_bookmarksBar.Bottom + inset,
+                ClientSize.Height - _updateNotice.Height - inset));
+    }
+
+    private bool DismissUpdateNotice(bool suppress)
+    {
+        if (suppress)
+        {
+            try { _updateNoticePreferences.SetSuppressed(true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _updateNotice.ShowPreferenceError();
+                return false;
+            }
+        }
+        _updateNotice.Hide();
+        return true;
+    }
+
     private void PrepareSubmenu(BrowserMenuItem item)
     {
         if (item.DropDown is not BrowserOverflowMenu menu) return;
-        var screen = Screen.FromControl(_overflowButton).WorkingArea;
+        var bounds = OverflowMenuBounds(_overflowButton);
+        var parentLeft = item.Owner?.PointToScreen(Point.Empty).X ?? bounds.Right;
+        var availableWidth = Math.Max(1, parentLeft - bounds.Left);
         menu.ApplyTheme();
-        menu.ConstrainTo(new Size(Math.Min(OverflowMenuBounds(_overflowButton).Width, screen.Width), screen.Height - 16), DeviceDpi);
+        menu.ConstrainTo(new Size(availableWidth, bounds.Height), DeviceDpi);
+        item.DropDownDirection = ToolStripDropDownDirection.Left;
     }
 
     private static void ClearMenuItems(ToolStripItemCollection items)
@@ -947,6 +995,7 @@ public sealed class BrowserForm : Form
         _settingsTab?.ApplyTheme();
         _profileTab?.ApplyTheme();
         _downloadsTab?.ApplyTheme();
+        _updateNotice.ApplyTheme();
         foreach (var dialog in OwnedForms.OfType<MediaDownloadDialog>()) dialog.ApplyTheme();
         _suggestionPanel.Invalidate();
         _omnibox.Zoom.Invalidate();
@@ -1249,7 +1298,7 @@ public sealed class BrowserForm : Form
         try
         {
             await Task.Delay(1500, _updateLifetime.Token);
-            await OfferUpdateAsync(await CheckForUpdatesAsync(manual: false));
+            OfferUpdate(await CheckForUpdatesAsync(manual: false));
             if (!IsDisposed) _updatePoll.Start();
         }
         catch (OperationCanceledException) { /* janela encerrada */ }
@@ -1267,6 +1316,7 @@ public sealed class BrowserForm : Form
             var update = await _updates.CheckAsync(current, _updateLifetime.Token);
             if (IsDisposed) return null;
             _availableUpdate = update;
+            if (update is null) _updateNotice.Hide();
             _updateItem.Text = update is null
                 ? "Atualizar CottonBrowser"
                 : $"Atualização disponível ({update.Tag})";
@@ -1283,6 +1333,7 @@ public sealed class BrowserForm : Form
         catch (Exception ex)
         {
             _availableUpdate = null;
+            _updateNotice.Hide();
             if (manual && !IsDisposed)
                 MessageBox.Show(this, "Não foi possível verificar as atualizações.\n\n" + ex.Message,
                     "Atualizações", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1302,23 +1353,19 @@ public sealed class BrowserForm : Form
         }
     }
 
-    private async Task OfferUpdateAsync(BrowserUpdate? update)
+    private void OfferUpdate(BrowserUpdate? update)
     {
-        if (update is null || IsDisposed || _offeredUpdateVersion == update.Version) return;
+        if (update is null || IsDisposed || _offeredUpdateVersion == update.Version
+            || _updateNoticePreferences.Suppressed) return;
         _offeredUpdateVersion = update.Version;
-        await InstallUpdateAsync(update);
+        PositionUpdateNotice();
+        _updateNotice.ShowUpdate(update);
     }
 
     private async Task InstallUpdateAsync(BrowserUpdate update)
     {
         if (_updateBusy || IsDisposed) return;
-        if (MessageBox.Show(this,
-            $"O CottonBrowser {update.Tag} está disponível. Deseja atualizar agora? " +
-            "O download acontece aqui no navegador; ele será fechado e reiniciado. " +
-            "Se escolher Não, poderá atualizar depois no menu ⋮ > Atualizar CottonBrowser.",
-            "Atualização disponível", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-            return;
-
+        _updateNotice.Hide();
         _updateBusy = true;
         _updateItem.Enabled = false;
         _updateItem.Text = "Baixando atualização...";
@@ -1663,6 +1710,7 @@ public sealed class BrowserForm : Form
             _tabs?.Close(tab);
             if (_tabView.TabCount == 0) Close();
         };
+        UpdateTabMemoryPriorities();
         RefreshActiveTab(resetEditing: false);
     }
 
@@ -1922,13 +1970,7 @@ public sealed class BrowserForm : Form
             "MediaRouter",                 // descoberta de Cast na rede local
             "Translate",
             "InterestFeedContentSuggestions",
-            "CalculateNativeWinOcclusion", // ver nota abaixo
         }),
-
-        // --- Heap do V8 -----------------------------------------------------
-        // Teto de 256 MB para a old generation. Sites bem comportados nunca
-        // chegam perto; sites com vazamento sofrem GC antes de comer 1 GB.
-        "--js-flags=--max-old-space-size=256",
 
         // --- Renderizacao ---------------------------------------------------
         // NAO desabilitamos a GPU de proposito: sem aceleracao, a composicao
@@ -2368,6 +2410,7 @@ public sealed class BrowserForm : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        PositionUpdateNotice();
 
         if (!_windowFullscreen && WindowState != FormWindowState.Minimized)
         {
@@ -2378,49 +2421,31 @@ public sealed class BrowserForm : Form
         if (WindowState != FormWindowState.Minimized && !_movingWindow)
             ScheduleScreenFit();
 
-        if (_core is null)
-            return;
-
-        if (WindowState == FormWindowState.Minimized)
-            SuspendEngine();
-        else
-            ResumeEngine();
+        UpdateTabMemoryPriorities();
     }
 
-    private async void SuspendEngine()
+    private void UpdateTabMemoryPriorities()
     {
-        foreach (var tab in _tabView.TabPages.OfType<BrowserTab>().ToArray())
+        if (IsDisposed || _tabView.IsDisposed) return;
+        var active = WindowState != FormWindowState.Minimized && Form.ActiveForm == this
+            ? _tabs?.Active : null;
+        foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
         {
+            if (tab.IsDisposed) continue;
             var core = tab.Web.CoreWebView2;
             if (core is null) continue;
             try
             {
-                core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Low;
-                // Não escondemos o controle: evita corridas ao restaurar durante o await.
-                await core.TrySuspendAsync();
-                if (!tab.IsDisposed && !IsDisposed && WindowState != FormWindowState.Minimized)
-                {
-                    if (core.IsSuspended) core.Resume();
-                    core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
-                }
+                // O WebView2 mantém áudio, scripts e conexões em segundo plano.
+                // Ao voltar à guia, a prioridade normal restaura a resposta.
+                var desired = tab == active ? CoreWebView2MemoryUsageTargetLevel.Normal
+                    : CoreWebView2MemoryUsageTargetLevel.Low;
+                if (core.MemoryUsageTargetLevel != desired)
+                    core.MemoryUsageTargetLevel = desired;
             }
-            catch (Exception) { /* Aba fechada ou runtime não permite suspensão. */ }
-            if (IsDisposed || WindowState != FormWindowState.Minimized) break;
-        }
-    }
-
-    private void ResumeEngine()
-    {
-        foreach (var tab in _tabView.TabPages.OfType<BrowserTab>().ToArray())
-        {
-            var core = tab.Web.CoreWebView2;
-            if (core is null) continue;
-            try
-            {
-                if (core.IsSuspended) core.Resume();
-                core.MemoryUsageTargetLevel = CoreWebView2MemoryUsageTargetLevel.Normal;
-            }
-            catch (Exception) { /* Controle em encerramento. */ }
+            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException
+                or System.Runtime.InteropServices.COMException)
+            { /* A guia foi fechada durante a mudança de prioridade. */ }
         }
     }
 }

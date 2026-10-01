@@ -30,6 +30,16 @@ var stagingRoot = Path.Combine(Path.GetTempPath(), "cotton-update-check-" + Guid
 Directory.CreateDirectory(stagingRoot);
 try
 {
+    var preferencePath = Path.Combine(stagingRoot, "update-notice.txt");
+    var preferences = new UpdateNoticePreferenceStore(preferencePath);
+    Check(!preferences.Suppressed, "update notice starts enabled");
+    preferences.SetSuppressed(true);
+    Check(new UpdateNoticePreferenceStore(preferencePath).Suppressed,
+        "do not show again persists across restarts");
+    preferences.SetSuppressed(false);
+    Check(!new UpdateNoticePreferenceStore(preferencePath).Suppressed,
+        "update notice can be enabled again");
+
     using var client = new HttpClient(new FakeHandler(request =>
         request.RequestUri?.Host == "api.github.com"
             ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(releaseJson, Encoding.UTF8, "application/json") }
