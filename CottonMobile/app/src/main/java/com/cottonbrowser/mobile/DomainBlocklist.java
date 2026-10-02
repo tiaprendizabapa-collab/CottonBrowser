@@ -33,6 +33,14 @@ public final class DomainBlocklist {
             line = line.trim();
             if (line.isEmpty() || line.startsWith("!")) continue;
 
+            // The APK contains tens of thousands of plain ASCII domains. Avoid regex and
+            // IDN allocations for their common path, both at startup and per request.
+            if (line.indexOf(' ') < 0 && line.indexOf('\t') < 0) {
+                String domain = canonicalHost(line);
+                if (isValidRule(domain)) domains.add(domain);
+                continue;
+            }
+
             String[] parts = line.split("\\s+");
             int firstDomain = parts.length == 1 ? 0 : (isHostsAddress(parts[0]) ? 1 : -1);
             if (firstDomain < 0) continue;
@@ -65,6 +73,11 @@ public final class DomainBlocklist {
         if (value == null) return null;
         String host = value.trim();
         if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        boolean ascii = true;
+        for (int i = 0; i < host.length(); i++) {
+            if (host.charAt(i) > 127) { ascii = false; break; }
+        }
+        if (ascii) return isValidRule(host) ? host.toLowerCase(Locale.ROOT) : null;
         try {
             return IDN.toASCII(host, IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
         } catch (IllegalArgumentException ignored) {
@@ -73,13 +86,24 @@ public final class DomainBlocklist {
     }
 
     private static boolean isValidRule(String domain) {
-        if (domain == null || domain.length() > 253 || domain.matches("[0-9.]+")) return false;
+        if (domain == null || domain.length() > 253) return false;
         int dot = domain.indexOf('.');
         if (dot <= 0 || dot == domain.length() - 1) return false;
-        for (String label : domain.split("\\.", -1)) {
-            if (label.isEmpty() || label.length() > 63 || label.startsWith("-") || label.endsWith("-"))
-                return false;
+        int start = 0;
+        boolean allNumeric = true;
+        for (int i = 0; i <= domain.length(); i++) {
+            if (i == domain.length() || domain.charAt(i) == '.') {
+                if (i == start || i - start > 63 || domain.charAt(start) == '-' || domain.charAt(i - 1) == '-')
+                    return false;
+                start = i + 1;
+            } else {
+                char ch = domain.charAt(i);
+                boolean digit = ch >= '0' && ch <= '9';
+                if (!digit && ch != '-' && !(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z'))
+                    return false;
+                if (!digit) allNumeric = false;
+            }
         }
-        return true;
+        return !allNumeric;
     }
 }

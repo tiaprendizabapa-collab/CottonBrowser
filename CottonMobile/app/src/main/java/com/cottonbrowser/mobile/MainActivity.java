@@ -72,7 +72,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import javax.net.ssl.HttpsURLConnection;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -110,7 +109,8 @@ public final class MainActivity extends Activity {
     private AdBlocker adBlocker;
     private volatile Set<String> protectionExceptions = Collections.emptySet();
     private String youtubeProtectionScript = "";
-    private boolean youtubeDocumentStartSupported;
+    private String pageProtectionScript = "";
+    private boolean documentStartSupported;
     private FrameLayout pageHost;
     private LinearLayout tabItems;
     private HorizontalScrollView tabScroller;
@@ -153,8 +153,8 @@ public final class MainActivity extends Activity {
             }
         });
         youtubeProtectionScript = readBundledScript("youtube_protection.js");
-        youtubeDocumentStartSupported = !youtubeProtectionScript.isEmpty()
-                && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
+        pageProtectionScript = readBundledScript("page_protection.js");
+        documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
         buildInterface();
         addTab(null, true);
         if (adBlocker.getDomainCount() == 0) toast("Lista de bloqueio indisponível nesta instalação");
@@ -432,7 +432,7 @@ public final class MainActivity extends Activity {
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
-        installYouTubeProtection(tab, webView);
+        installProtectionScripts(tab, webView);
         webView.setFindListener((activeMatch, totalMatches, finished) -> {
             if (tab == activeTab && findBar.getVisibility() == View.VISIBLE)
                 findCount.setText(totalMatches == 0 ? "0" : (activeMatch + 1) + "/" + totalMatches);
@@ -543,7 +543,7 @@ public final class MainActivity extends Activity {
         if (wasActive) activeTab = null;
         pageHost.removeView(tab.page);
         tab.webView.stopLoading();
-        if (tab.youtubeScriptHandler != null) tab.youtubeScriptHandler.remove();
+        if (tab.protectionScriptHandler != null) tab.protectionScriptHandler.remove();
         tab.webView.setWebChromeClient(null);
         tab.webView.setWebViewClient(null);
         tab.webView.destroy();
@@ -622,6 +622,8 @@ public final class MainActivity extends Activity {
 
     private void navigate(BrowserTab tab, String url) {
         if (!isWebUrl(url)) return;
+        tab.popupPending = false;
+        tab.popupSourceUrl = null;
         tab.navigationToken++;
         if (warnBeforeHttp(tab, url, () -> navigate(tab, url))) return;
         tab.url = url;
@@ -874,42 +876,43 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void installYouTubeProtection(BrowserTab tab, WebView webView) {
-        if (tab.youtubeScriptHandler != null) {
-            tab.youtubeScriptHandler.remove();
-            tab.youtubeScriptHandler = null;
+    private void installProtectionScripts(BrowserTab tab, WebView webView) {
+        if (tab.protectionScriptHandler != null) {
+            tab.protectionScriptHandler.remove();
+            tab.protectionScriptHandler = null;
         }
-        if (!youtubeDocumentStartSupported) return;
+        tab.documentStartInstalled = false;
+        if (!documentStartSupported) return;
+        try {
+            tab.protectionScriptHandler = WebViewCompat.addDocumentStartJavaScript(webView,
+                    protectionScript(), Collections.singleton("*"));
+            tab.documentStartInstalled = true;
+        } catch (RuntimeException ignored) {
+            // Installation can fail in one WebView without disabling early scripts in other tabs.
+        }
+    }
 
-        // Bake the persisted site exceptions into each document-start script. No JavaScript
-        // bridge or site-visible cookie is needed, and a reload applies a changed setting.
-        StringBuilder script = new StringBuilder("(function(){if([");
+    private String protectionScript() {
+        // Also honor a disabled parent site in subframes when its origin/referrer is available.
+        StringBuilder script = new StringBuilder("(function(){if(!/^https?:$/.test(location.protocol))return;const disabled=[");
         boolean first = true;
         for (String host : protectionExceptions) {
-            if (!isYouTubeUrl("https://" + host)) continue;
             if (!first) script.append(',');
             script.append(JSONObject.quote(host));
             first = false;
         }
-        script.append("].indexOf(location.hostname.toLowerCase())!==-1)return;");
-        script.append(youtubeProtectionScript).append("})();");
-        try {
-            tab.youtubeScriptHandler = WebViewCompat.addDocumentStartJavaScript(webView,
-                    script.toString(), new HashSet<>(Arrays.asList(
-                            "https://youtube.com", "https://*.youtube.com")));
-        } catch (RuntimeException ignored) {
-            // A WebView provider may advertise the feature but fail to install it.
-            youtubeDocumentStartSupported = false;
-        }
+        script.append("];if(disabled.indexOf(location.hostname.toLowerCase())!==-1)return;")
+                .append("try{if(disabled.indexOf(top.location.hostname.toLowerCase())!==-1)return;}catch(_){}")
+                .append("try{if(top!==window&&document.referrer&&disabled.indexOf(new URL(document.referrer).hostname.toLowerCase())!==-1)return;}catch(_){}")
+                .append(pageProtectionScript).append('\n').append(youtubeProtectionScript).append("})();");
+        return script.toString();
     }
 
-    private void injectYouTubeFallback(WebView webView, String url) {
-        if (youtubeDocumentStartSupported || youtubeProtectionScript.isEmpty()
-                || !isYouTubeUrl(url) || isProtectionDisabledForUrl(url)) return;
-        // Legacy providers cannot install a document-start script. Repeating the idempotent
-        // script after commit/finish catches page slots and SPA navigation, but may miss ads
-        // included in the first player response.
-        webView.evaluateJavascript(youtubeProtectionScript, null);
+    private void ensureProtectionScripts(WebView webView, String url) {
+        if (!isWebUrl(url) || isProtectionDisabledForUrl(url)) return;
+        // Idempotent fallback also repairs a missed document-start delivery. Legacy providers
+        // still cannot alter player responses that were consumed before the page committed.
+        webView.evaluateJavascript(protectionScript(), null);
     }
 
     private boolean isProtectionDisabledForUrl(String url) {
@@ -944,7 +947,10 @@ public final class MainActivity extends Activity {
         boolean enabled = !protectionExceptions.contains(host);
         String message = host + "\n\nRequisições bloqueadas nesta guia: "
                 + tab.blockedCount.get() + ". Solicitações em segundo plano não entram nessa contagem."
-                + (isYouTubeUrl(tab.url) ? " O filtro de anúncios do YouTube também não entra nessa contagem." : "")
+                + "\nDomínios na lista local: " + adBlocker.getDomainCount() + "."
+                + "\nEspaços de anúncios ocultados não entram na contagem de requisições."
+                + (isYouTubeUrl(tab.url) && !tab.documentStartInstalled
+                    ? "\nPara a proteção antecipada do YouTube, atualize o Android System WebView no aparelho." : "")
                 + (enabled ? "\n\nSe o site não funcionar, desative a proteção apenas para ele."
                 : "\n\nA proteção está desativada neste site.");
         new AlertDialog.Builder(this)
@@ -958,7 +964,7 @@ public final class MainActivity extends Activity {
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                             .putStringSet(PROTECTION_EXCEPTIONS_KEY, changed).apply();
                     for (BrowserTab candidate : tabs) {
-                        installYouTubeProtection(candidate, candidate.webView);
+                        installProtectionScripts(candidate, candidate.webView);
                     }
                     tab.webView.reload();
                     if (tab == activeTab) updateControls();
@@ -1246,9 +1252,16 @@ public final class MainActivity extends Activity {
 
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-            if (isProtectionDisabledForUrl(tab.url)) return null;
-            WebResourceResponse blocked = adBlocker.intercept(request);
+            String origin = tab.popupPending ? tab.popupSourceUrl : tab.url;
+            if (isProtectionDisabledForUrl(origin)) return null;
+            WebResourceResponse blocked = adBlocker.intercept(request, origin, tab.popupPending);
             if (blocked != null) tab.blockedCount.incrementAndGet();
+            if (blocked != null && request.isForMainFrame()) {
+                view.post(() -> {
+                    if (tabs.contains(tab)) closeTab(tab);
+                    toast("Popup de anúncio bloqueado");
+                });
+            }
             return blocked;
         }
 
@@ -1257,6 +1270,12 @@ public final class MainActivity extends Activity {
             if (!request.isForMainFrame()) return false;
             String url = request.getUrl().toString();
             if (isWebUrl(url)) {
+                if (tab.popupPending && !isProtectionDisabledForUrl(tab.popupSourceUrl)
+                        && adBlocker.isEnabled() && adBlocker.matches(request.getUrl(), tab.popupSourceUrl)) {
+                    closeTab(tab);
+                    toast("Popup de anúncio bloqueado");
+                    return true;
+                }
                 tab.navigationToken++;
                 return warnBeforeHttp(tab, url, () -> view.loadUrl(url));
             }
@@ -1285,7 +1304,11 @@ public final class MainActivity extends Activity {
 
         @Override
         public void onPageCommitVisible(WebView view, String url) {
-            injectYouTubeFallback(view, url);
+            if (isWebUrl(url)) {
+                tab.popupPending = false;
+                tab.popupSourceUrl = null;
+            }
+            ensureProtectionScripts(view, url);
         }
 
         @Override
@@ -1296,7 +1319,7 @@ public final class MainActivity extends Activity {
             if (isWebUrl(url)) tab.url = url;
             if (tab.error.getVisibility() != View.VISIBLE)
                 recordHistory(url, tab.title);
-            injectYouTubeFallback(view, url);
+            ensureProtectionScripts(view, url);
             if (tab == activeTab) updateControls();
         }
 
@@ -1351,6 +1374,8 @@ public final class MainActivity extends Activity {
             // Target=_blank and user-triggered window.open() are regular, isolated tabs in the same profile.
             if (!isUserGesture || isDialog || resultMsg == null) return false;
             BrowserTab newTab = addTab(null, true, false);
+            newTab.popupSourceUrl = tab.url;
+            newTab.popupPending = true;
             WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
             transport.setWebView(newTab.webView);
             resultMsg.sendToTarget();
@@ -1470,7 +1495,7 @@ public final class MainActivity extends Activity {
         }
         for (BrowserTab tab : tabs) {
             pageHost.removeView(tab.page);
-            if (tab.youtubeScriptHandler != null) tab.youtubeScriptHandler.remove();
+            if (tab.protectionScriptHandler != null) tab.protectionScriptHandler.remove();
             tab.webView.destroy();
         }
         tabs.clear();
@@ -1530,7 +1555,10 @@ public final class MainActivity extends Activity {
         volatile String url;
         Bitmap favicon;
         final AtomicInteger blockedCount = new AtomicInteger();
-        ScriptHandler youtubeScriptHandler;
+        ScriptHandler protectionScriptHandler;
+        boolean documentStartInstalled;
+        volatile String popupSourceUrl;
+        volatile boolean popupPending;
         int progress;
         boolean loading;
         int navigationToken;

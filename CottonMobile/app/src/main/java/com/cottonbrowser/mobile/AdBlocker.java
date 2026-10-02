@@ -8,6 +8,7 @@ import android.webkit.WebResourceResponse;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.SequenceInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
@@ -30,30 +31,35 @@ public final class AdBlocker {
         BLOCKED_HEADERS = Collections.unmodifiableMap(headers);
     }
 
-    private final DomainBlocklist domains;
+    private final RequestBlocklist rules;
     private final AtomicBoolean enabled = new AtomicBoolean(true);
     private final AtomicLong blockedCount = new AtomicLong();
 
-    private AdBlocker(DomainBlocklist domains) {
-        this.domains = domains;
+    private AdBlocker(RequestBlocklist rules) {
+        this.rules = rules;
     }
 
     /** An unreadable APK asset must not prevent the browser from opening. */
     public static AdBlocker load(Context context) {
-        try (InputStreamReader reader = new InputStreamReader(
-                context.getApplicationContext().getAssets().open("blocklist.txt"),
-                StandardCharsets.UTF_8)) {
-            return new AdBlocker(DomainBlocklist.parse(reader));
-        } catch (IOException ignored) {
-            return new AdBlocker(DomainBlocklist.empty());
+        var assets = context.getApplicationContext().getAssets();
+        try (InputStreamReader reader = new InputStreamReader(new SequenceInputStream(
+                assets.open("blocklist.txt"), assets.open("easylist_domains.txt")), StandardCharsets.UTF_8);
+             InputStreamReader allows = new InputStreamReader(assets.open("easylist_allow.tsv"), StandardCharsets.UTF_8)) {
+            return new AdBlocker(RequestBlocklist.parse(reader, allows));
+        } catch (IOException | RuntimeException ignored) {
+            return new AdBlocker(RequestBlocklist.empty());
         }
     }
 
     /** Return null to let WebView load the resource, or an empty 403 response to block it. */
     public WebResourceResponse intercept(WebResourceRequest request) {
-        // Never replace the top-level document with a blank response, even if its host is listed.
-        if (!enabled.get() || request == null || request.isForMainFrame()
-                || !matches(request.getUrl())) return null;
+        return intercept(request, originFromHeaders(request), false);
+    }
+
+    /** Main documents are checked only during a page-created popup's first navigation. */
+    public WebResourceResponse intercept(WebResourceRequest request, String documentUrl, boolean popup) {
+        if (!enabled.get() || request == null || (request.isForMainFrame() && !popup)
+                || !matches(request.getUrl(), documentUrl)) return null;
 
         blockedCount.incrementAndGet();
         return new WebResourceResponse("text/plain", "UTF-8", 403,
@@ -66,16 +72,28 @@ public final class AdBlocker {
 
     public long getBlockedCount() { return blockedCount.get(); }
 
-    public int getDomainCount() { return domains.size(); }
-
-    public boolean matchesHost(String host) { return domains.matchesHost(host); }
+    public int getDomainCount() { return rules.size(); }
 
     /** Exact-host or dot-boundary subdomain match; never a substring match. */
     public boolean matches(Uri uri) {
+        return matches(uri, null);
+    }
+
+    public boolean matches(Uri uri, String documentUrl) {
         if (uri == null) return false;
         String scheme = uri.getScheme();
         if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) return false;
 
-        return domains.matchesHost(uri.getHost());
+        String originHost = documentUrl == null ? null : Uri.parse(documentUrl).getHost();
+        return rules.matches(uri.toString(), uri.getHost(), originHost);
+    }
+
+    private static String originFromHeaders(WebResourceRequest request) {
+        if (request == null || request.getRequestHeaders() == null) return null;
+        for (Map.Entry<String, String> header : request.getRequestHeaders().entrySet()) {
+            if ("Referer".equalsIgnoreCase(header.getKey()) || "Origin".equalsIgnoreCase(header.getKey()))
+                return header.getValue();
+        }
+        return null;
     }
 }

@@ -24,16 +24,24 @@ jobs:
           node-version: '22'
       - name: Verificar proteção do YouTube
         run: node CottonMobile/checks/youtube_protection_check.js
+      - name: Verificar filtros embarcados e proteção da página
+        run: |
+          node CottonMobile/checks/build_filter_assets.js --check
+          node CottonMobile/checks/page_protection_check.js
       - name: Verificar lista de bloqueio Android
         run: |
           mkdir -p "$RUNNER_TEMP/cotton-adblock-checks"
           javac -d "$RUNNER_TEMP/cotton-adblock-checks" \
             CottonMobile/app/src/main/java/com/cottonbrowser/mobile/DomainBlocklist.java \
-            CottonMobile/checks/BlocklistChecks.java
+            CottonMobile/app/src/main/java/com/cottonbrowser/mobile/RequestBlocklist.java \
+            CottonMobile/checks/BlocklistChecks.java \
+            CottonMobile/checks/RequestBlocklistChecks.java
           java -cp "$RUNNER_TEMP/cotton-adblock-checks" \
             com.cottonbrowser.mobile.BlocklistChecks \
             CottonMobile/app/src/main/assets/blocklist.txt \
             LeanBrowser/Assets/blocklist.txt
+          java -cp "$RUNNER_TEMP/cotton-adblock-checks" \
+            com.cottonbrowser.mobile.RequestBlocklistChecks CottonMobile/app/src/main/assets
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -44,6 +52,26 @@ jobs:
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Compilar APK Android
         run: gradle -p CottonMobile :app:assembleRelease --no-daemon
+      - name: Habilitar emulador Android
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Verificar proteção no WebView Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: gradle -p CottonMobile :app:connectedDebugAndroidTest --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-protection-test-results
+          path: |
+            CottonMobile/app/build/reports/androidTests
+            CottonMobile/app/build/outputs/androidTest-results
       - name: Verificar assinatura do APK
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose CottonMobile/app/build/outputs/apk/release/app-release.apk

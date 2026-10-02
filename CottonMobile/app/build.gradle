@@ -4,6 +4,8 @@ plugins {
 
 dependencies {
     implementation 'androidx.webkit:webkit:1.15.0'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
 }
 
 def ciBuildNumber = System.getenv('GITHUB_RUN_NUMBER')
@@ -17,6 +19,7 @@ android {
         applicationId 'com.cottonbrowser.mobile'
         minSdk 26
         targetSdk 35
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         versionCode mobileVersionCode
         versionName "0.2.0-preview.${mobileVersionCode}"
         resValue 'string', 'source_commit', System.getenv('GITHUB_SHA') ?: 'local'
