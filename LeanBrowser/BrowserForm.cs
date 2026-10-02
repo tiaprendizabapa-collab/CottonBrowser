@@ -80,6 +80,7 @@ public sealed class BrowserForm : Form
     private readonly AccessControl _access = new();
     private readonly NavigationTelemetry _telemetry;
     private SettingsTab? _settingsTab;
+    private BrowserTab? _settingsBookmarkTab;
     private ProfileTab? _profileTab;
     private readonly AdProtection _adProtection = SharedAdProtection;
     private readonly SiteAllowlist _siteAllowlist = new(new SiteExceptionStore());
@@ -838,23 +839,39 @@ public sealed class BrowserForm : Form
 
     private void OpenSettings()
     {
+        if (_tabs?.Active is { } page) _settingsBookmarkTab = page;
         if (_settingsTab is null)
         {
             _settingsTab = new SettingsTab(ApplyTheme, ClearSavedPasswords, () =>
             {
                 try { return _bookmarks.Load(); } catch { return Array.Empty<Bookmark>(); }
-            }, AddBookmark, url => WithBookmarkErrors(() =>
+            }, AddSettingsBookmark, url => WithBookmarkErrors(() =>
             {
                 _bookmarks.Remove(url);
                 RefreshBookmarksBar();
                 _omnibox.SetFavorite(IsFavorite(_core?.Source ?? ""));
-            }), _access.IsAdvancedMode, ApplyAccent);
+            }), _access.IsAdvancedMode, ApplyAccent, _access.UserName);
             _settingsTab.FavoriteSelected += async url => await OpenTabAsync(url);
+            _settingsTab.ProfileRequested += OpenProfile;
+            _settingsTab.BrowserCenterRequested += async () => await OpenTabAsync(TrustedBrowserBridge.UiUrl);
             _tabView.TabPages.Add(_settingsTab);
         }
         _settingsTab.ReloadBookmarks();
         _tabView.SelectedTab = _settingsTab;
     }
+
+    private void AddSettingsBookmark() => WithBookmarkErrors(() =>
+    {
+        var page = _settingsBookmarkTab is { IsDisposed: false } saved ? saved
+            : _tabView.TabPages.OfType<BrowserTab>().LastOrDefault(tab => !tab.IsDisposed);
+        if (page?.Web.CoreWebView2 is not { } core || !BookmarkStore.IsWebUrl(core.Source))
+        {
+            MessageBox.Show(this, "Abra um site e use a estrela na barra de endereço para salvá-lo.", "Favoritos");
+            return;
+        }
+        _bookmarks.Add(core.Source, core.DocumentTitle);
+        RefreshBookmarksBar();
+    });
 
     private void OpenProfile()
     {
@@ -1014,11 +1031,9 @@ public sealed class BrowserForm : Form
 
     private static void ApplyThemeRecursive(Control control)
     {
-        if (control is not SettingsTab)
-        {
-            control.BackColor = control is TextBox or ListBox ? Theme.Surface : Theme.Chrome;
-            control.ForeColor = Theme.Ink;
-        }
+        if (control is SettingsTab) return; // A página aplica sua própria hierarquia de superfícies.
+        control.BackColor = control is TextBox or ListBox ? Theme.Surface : Theme.Chrome;
+        control.ForeColor = Theme.Ink;
         foreach (Control child in control.Controls) ApplyThemeRecursive(child);
     }
 
@@ -1044,7 +1059,8 @@ public sealed class BrowserForm : Form
     private async void ClearSavedPasswords()
     {
         if (!_access.IsAdvancedMode) return;
-        var core = _core;
+        var core = _tabView.TabPages.OfType<BrowserTab>()
+            .FirstOrDefault(tab => !tab.IsPrivate && !tab.IsDisposed && tab.Web.CoreWebView2 is not null)?.Web.CoreWebView2;
         if (core is null || MessageBox.Show(this, "Apagar todas as senhas salvas neste navegador?", "Senhas", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         try { await PasswordManager.ClearSavedPasswordsAsync(core); MessageBox.Show(this, "Senhas salvas apagadas."); }
         catch { MessageBox.Show(this, "Não foi possível apagar as senhas."); }
