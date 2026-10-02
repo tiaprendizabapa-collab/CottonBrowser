@@ -14,6 +14,13 @@ internal static class Program
     {
         try
         {
+            if (args.SequenceEqual(["--verify-runtime"]))
+            {
+                ApplicationConfiguration.Initialize();
+                using var form = new Form();
+                _ = form.Handle;
+                return;
+            }
             if (args.Length != 4 || !int.TryParse(args[0], out var parentPid) ||
                 args[3].Length != 64 || !args[3].All(Uri.IsHexDigit))
                 throw new InvalidDataException("Os parâmetros da atualização são inválidos.");
@@ -106,6 +113,10 @@ internal static class Program
         }
         catch (Exception ex)
         {
+            if (args.SequenceEqual(["--verify-runtime"]))
+            {
+                Console.Error.WriteLine(ex); Environment.ExitCode = 1; return;
+            }
             MessageBox.Show("Não foi possível instalar a atualização. Os arquivos anteriores " +
                 "foram preservados quando possível.\n\n" + ex.Message,
                 "CottonBrowser", MessageBoxButtons.OK, MessageBoxIcon.Error);
