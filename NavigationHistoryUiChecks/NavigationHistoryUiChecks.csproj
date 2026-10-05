@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../LeanBrowser/NavigationHistoryStore.cs" Link="NavigationHistoryStore.cs" />
+    <Compile Include="../LeanBrowser/BrowserPreferences.cs" Link="BrowserPreferences.cs" />
+    <Compile Include="../LeanBrowser/BookmarkStore.cs" Link="BookmarkStore.cs" />
+    <Compile Include="../LeanBrowser/UrlHelper.cs" Link="UrlHelper.cs" />
+    <Compile Include="../LeanBrowser/UI.cs" Link="UI.cs" />
+    <Compile Include="../LeanBrowser/WindowLayout.cs" Link="WindowLayout.cs" />
+    <Compile Include="../LeanBrowser/SettingsTab.cs" Link="SettingsTab.cs" />
+    <Compile Include="../LeanBrowser/HistoryTab.cs" Link="HistoryTab.cs" />
+    <EmbeddedResource Include="../LeanBrowser/Assets/AbapaLogo.png" LogicalName="LeanBrowser.Assets.AbapaLogo.png" />
+  </ItemGroup>
+</Project>

@@ -3,8 +3,6 @@ using System.Text.Json;
 
 namespace LeanBrowser;
 
-internal sealed record SuggestionItem(string Text, string? Url);
-
 /// <summary>Lista flutuante arredondada, controlada pelo teclado da omnibox.</summary>
 internal sealed class SuggestionPanel : Control
 {
@@ -173,112 +171,6 @@ internal sealed class SuggestionPanel : Control
             g.DrawLine(dismissPen, dismiss.X + 7, dismiss.Y + 7, dismiss.Right - 7, dismiss.Bottom - 7);
             g.DrawLine(dismissPen, dismiss.Right - 7, dismiss.Y + 7, dismiss.X + 7, dismiss.Bottom - 7);
         }
-    }
-}
-
-/// <summary>Histórico pequeno e local; leitura e gravação fora da thread de UI.</summary>
-internal sealed class NavigationHistoryStore
-{
-    private readonly string _path;
-    private readonly Task _ready;
-    private readonly object _gate = new();
-    private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private List<HistoryEntry> _entries = new();
-
-    private sealed record HistoryEntry(string Url, string Title, DateTimeOffset VisitedAt);
-
-    public NavigationHistoryStore(string path)
-    {
-        _path = path;
-        _ready = LoadAsync();
-    }
-
-    private async Task LoadAsync()
-    {
-        try
-        {
-            var loaded = await Task.Run(() => File.Exists(_path)
-                ? JsonSerializer.Deserialize<List<HistoryEntry>>(File.ReadAllText(_path))
-                : null).ConfigureAwait(false);
-            if (loaded is null) return;
-            lock (_gate)
-            {
-                _entries = loaded.Concat(_entries)
-                    .Where(entry => entry is not null && BookmarkStore.IsWebUrl(entry.Url))
-                    .GroupBy(entry => entry.Url, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group.MaxBy(entry => entry.VisitedAt)!)
-                    .OrderByDescending(entry => entry.VisitedAt).Take(200).ToList();
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
-    }
-
-    public IReadOnlyList<SuggestionItem> Find(string query)
-    {
-        lock (_gate)
-            return _entries.Where(entry => entry.Url.Contains(query, StringComparison.OrdinalIgnoreCase)
-                    || entry.Title?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
-                .Take(4)
-                .Select(entry => new SuggestionItem(
-                    string.IsNullOrWhiteSpace(entry.Title) ? UrlHelper.ForDisplay(entry.Url) : entry.Title,
-                    entry.Url))
-                .ToArray();
-    }
-
-    public SuggestionItem? FindAddressCompletion(string query)
-    {
-        if (query.Length < 2 || query.Contains(' ')) return null;
-        lock (_gate)
-        {
-            var match = _entries.FirstOrDefault(entry =>
-            {
-                var display = UrlHelper.ForDisplay(entry.Url);
-                return display.Length > query.Length
-                    && display.StartsWith(query, StringComparison.OrdinalIgnoreCase);
-            });
-            return match is null ? null : new SuggestionItem(
-                string.IsNullOrWhiteSpace(match.Title) ? UrlHelper.ForDisplay(match.Url) : match.Title,
-                match.Url);
-        }
-    }
-
-    public void Remove(string url)
-    {
-        lock (_gate)
-            _entries.RemoveAll(entry => string.Equals(entry.Url, url, StringComparison.OrdinalIgnoreCase));
-        _ = SaveAsync();
-    }
-
-    public void Record(string url, string title)
-    {
-        if (!BookmarkStore.IsWebUrl(url)) return;
-        lock (_gate)
-        {
-            _entries.RemoveAll(entry => string.Equals(entry.Url, url, StringComparison.OrdinalIgnoreCase));
-            _entries.Insert(0, new HistoryEntry(url, title, DateTimeOffset.UtcNow));
-            if (_entries.Count > 200) _entries.RemoveRange(200, _entries.Count - 200);
-        }
-        _ = SaveAsync();
-    }
-
-    private async Task SaveAsync()
-    {
-        await _ready.ConfigureAwait(false);
-        await _writeGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            HistoryEntry[] snapshot;
-            lock (_gate) snapshot = _entries.ToArray();
-            await Task.Run(() =>
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-                var temp = _path + ".tmp";
-                File.WriteAllText(temp, JsonSerializer.Serialize(snapshot));
-                File.Move(temp, _path, true);
-            }).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        finally { _writeGate.Release(); }
     }
 }
 

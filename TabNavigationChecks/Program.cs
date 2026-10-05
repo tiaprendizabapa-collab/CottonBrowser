@@ -56,6 +56,7 @@ internal static class Program
         Console.WriteLine("PASS: ordem, alternância, fechamento e clique do meio em guias normais, anônimas e auxiliares.");
         DownloadChecks.Run();
         MenuChecks.Run();
+        OrganizationChecks.Run();
     }
 
     private static void MiddleClick(Control header) =>

@@ -103,6 +103,14 @@ jobs:
         shell: pwsh
         run: dotnet run --project MediaDownloadChecks -c Release
 
+      - name: Verificar sessão, abas, histórico e economia de memória
+        shell: pwsh
+        run: |
+          foreach ($project in @('SessionChecks', 'TabNavigationChecks', 'UrlChecks', 'NavigationHistoryChecks', 'TabMemoryChecks')) {
+            dotnet run --project $project
+            if ($LASTEXITCODE -ne 0) { throw "Falha nas verificações: $project" }
+          }
+
       - name: Definir versão e compilar
         shell: pwsh
         env:
@@ -131,6 +139,11 @@ jobs:
 
             $latest = $versions | Sort-Object | Select-Object -Last 1
             $version = '{0}.{1}.{2}' -f $latest.Major, $latest.Minor, ($latest.Build + 1)
+            $project = [xml](Get-Content 'LeanBrowser/LeanBrowser.csproj' -Raw)
+            $projectVersion = $project.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+            if ($projectVersion -match '^\d+\.\d+\.\d+$' -and [Version]$projectVersion -gt [Version]$version) {
+              $version = $projectVersion
+            }
             $tag = "v$version"
           }
           else {

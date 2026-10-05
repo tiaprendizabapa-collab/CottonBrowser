@@ -45,12 +45,32 @@ public sealed class SettingsTab : TabPage
     private readonly SettingsCard _themeCard;
     private readonly SettingsCard _accentCard;
     private readonly SettingsCard _favoritesCard;
+    private readonly SettingsCard _historyCard;
+    private HistoryView? _historyView;
     private readonly SettingsCard? _passwordCard;
+    private readonly SettingsCard _sessionCard;
+    private readonly SettingsCard _performanceCard;
+    private readonly SettingsCard _searchEngineCard;
+    private readonly CheckBox _restoreSession = new() { Text = "Continuar de onde parei", AccessibleName = "Restaurar abas ao iniciar", AutoSize = false };
+    private readonly CheckBox _memorySaver = new() { Text = "Ativar economia de memória", AccessibleName = "Ativar economia de memória", AutoSize = false };
+    private readonly NumericUpDown _suspendDelay = new() { Minimum = 1, Maximum = 240, AccessibleName = "Minutos antes de suspender abas inativas" };
+    private readonly Label _suspendLabel = Caption("Suspender abas inativas após", 10f);
+    private readonly Label _minutesLabel = Caption("minutos", 10f, muted: true);
+    private readonly Label _exceptionsLabel = Caption("Manter estes sites sempre ativos (um por linha):", 10f);
+    private readonly TextBox _memoryExceptions = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, PlaceholderText = "exemplo.com\ntrabalho.exemplo.com", AccessibleName = "Sites que não devem ser suspensos" };
+    private readonly SettingsButton _saveExceptions = new("Salvar exceções", "\uE74E");
+    private readonly Label _memoryNote = Caption("Áudio, chamadas, downloads e páginas com alterações pendentes são preservados. Exceções também incluem subdomínios.", 9.5f, muted: true);
+    private readonly Label _sessionNote = Caption("As abas normais são recuperadas ao abrir o navegador, inclusive após um encerramento inesperado. Abas anônimas não são salvas.", 10f, muted: true);
+    private readonly ComboBox _searchEngine = new() { DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "Mecanismo de pesquisa padrão" };
+    private readonly Label _searchEngineNote = Caption("Escolha o serviço usado ao pesquisar pela barra de endereço.", 10f, muted: true);
+    private bool _updatingPreferences;
+    private bool _exceptionsDirty;
     private string _section = "Geral";
     private bool _layoutRunning;
     public event Action<string>? FavoriteSelected;
     public event Action? ProfileRequested;
     public event Action? BrowserCenterRequested;
+    public event Action<string>? HistoryEntrySelected;
 
     public SettingsTab(Action<bool> setTheme, Action clearPasswords, Func<IReadOnlyList<Bookmark>> loadBookmarks,
         Action addBookmark, Action<string> removeBookmark, bool isAdmin, Action<Color> setAccent, string? userName = null) : base("Configurações")
@@ -66,6 +86,8 @@ public sealed class SettingsTab : TabPage
         _header.Controls.AddRange(new Control[] { _search, _title, _subtitle });
         _body.Controls.Add(_noResults);
         AddNavigation("Geral", "\uE80F"); AddNavigation("Aparência", "\uE790"); AddNavigation("Favoritos", "\uE734");
+        AddNavigation("Histórico", "\uE81C");
+        AddNavigation("Inicialização", "\uE777"); AddNavigation("Desempenho", "\uE945"); AddNavigation("Pesquisa", "\uE721");
         if (isAdmin) AddNavigation("Senhas salvas", "\uE72E");
         AddNavigation("Privacidade e proteção", "\uEA18");
 
@@ -74,8 +96,47 @@ public sealed class SettingsTab : TabPage
         var shortcuts = AddCard("Geral", "Preferências do navegador", "Encontre rapidamente o que deseja ajustar.", searchable: false);
         shortcuts.AddRow("Aparência", "Tema claro ou escuro e sua cor de destaque", "\uE790", () => SelectSection("Aparência"));
         shortcuts.AddRow("Favoritos", "Organize os sites que você acessa mais", "\uE734", ShowBookmarks);
+        shortcuts.AddRow("Histórico", "Consulte e gerencie as páginas visitadas", "\uE81C", () => SelectSection("Histórico"));
+        shortcuts.AddRow("Inicialização", "Recupere as abas da última sessão", "\uE777", () => SelectSection("Inicialização"));
+        shortcuts.AddRow("Desempenho", "Economia de memória e sites que ficam ativos", "\uE945", () => SelectSection("Desempenho"));
+        shortcuts.AddRow("Pesquisa", "Escolha Google, Bing ou DuckDuckGo", "\uE721", () => SelectSection("Pesquisa"));
         if (isAdmin) shortcuts.AddRow("Senhas salvas", "Gerencie as credenciais deste perfil", "\uE72E", () => SelectSection("Senhas salvas"));
         shortcuts.AddRow("Privacidade e proteção", "Acesse as ferramentas de segurança", "\uEA18", () => SelectSection("Privacidade e proteção"));
+
+        _historyCard = AddCard("Histórico", "Histórico de navegação", "Pesquise páginas visitadas ou apague visitas e períodos.", "historico histórico visitas páginas apagar excluir");
+        _sessionCard = AddCard("Inicialização", "Ao abrir o navegador", "Suas abas prontas para continuar a navegação.", "sessao sessão restaurar recuperar continuar iniciar abas");
+        _sessionCard.Controls.AddRange(new Control[] { _restoreSession, _sessionNote });
+        _restoreSession.CheckedChanged += (_, _) =>
+        {
+            if (_updatingPreferences) return;
+            BrowserPreferences.Current.RestoreSession = _restoreSession.Checked; SavePreferences();
+        };
+        _performanceCard = AddCard("Desempenho", "Economia de memória", "Libere recursos ao deixar abas sem uso em repouso.", "memoria memória desempenho suspender inativas minutos exceções");
+        _performanceCard.Controls.AddRange(new Control[] { _memorySaver, _suspendLabel, _suspendDelay, _minutesLabel,
+            _exceptionsLabel, _memoryExceptions, _saveExceptions, _memoryNote });
+        _memorySaver.CheckedChanged += (_, _) =>
+        {
+            _suspendDelay.Enabled = _memorySaver.Checked;
+            if (_updatingPreferences) return;
+            BrowserPreferences.Current.MemorySaverEnabled = _memorySaver.Checked; SavePreferences();
+        };
+        _suspendDelay.ValueChanged += (_, _) =>
+        {
+            if (_updatingPreferences) return;
+            BrowserPreferences.Current.SuspendAfterMinutes = (int)_suspendDelay.Value; SavePreferences();
+        };
+        _memoryExceptions.TextChanged += (_, _) => { if (!_updatingPreferences) _exceptionsDirty = true; };
+        _saveExceptions.Click += (_, _) => SaveMemoryExceptions();
+        _searchEngineCard = AddCard("Pesquisa", "Mecanismo de pesquisa", "Pesquise com o serviço de sua preferência.", "pesquisa buscador google bing duckduckgo mecanismo padrão");
+        _searchEngine.Items.AddRange(new object[] { "Google", "Bing", "DuckDuckGo" });
+        _searchEngineCard.Controls.AddRange(new Control[] { _searchEngine, _searchEngineNote });
+        _searchEngine.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updatingPreferences || _searchEngine.SelectedItem is not string engine) return;
+            BrowserPreferences.Current.SearchEngine = engine; SavePreferences();
+        };
+        BrowserPreferences.Changed += PreferencesChanged;
+        ReloadPreferences();
 
         _themeCard = AddCard("Aparência", "Tema do navegador", "Escolha a aparência das abas, menus e páginas internas.", "tema claro escuro visual");
         _themeCard.Controls.AddRange(new Control[] { _light, _dark });
@@ -140,6 +201,74 @@ public sealed class SettingsTab : TabPage
 
     public void ShowBookmarks() { SelectSection("Favoritos"); if (_favorites.Items.Count != 0) _favorites.Focus(); }
 
+    internal void ConfigureHistory(NavigationHistoryStore store)
+    {
+        _historyView?.Dispose();
+        _historyView = new HistoryView(store, embedded: true);
+        _historyView.OpenRequested += url => HistoryEntrySelected?.Invoke(url);
+        _historyCard.Controls.Add(_historyView);
+        LayoutPage();
+    }
+
+    private void PreferencesChanged()
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired)
+        {
+            if (!IsHandleCreated) return;
+            try { BeginInvoke((Action)ReloadPreferences); } catch (InvalidOperationException) { }
+        }
+        else ReloadPreferences();
+    }
+
+    private void ReloadPreferences()
+    {
+        if (IsDisposed) return;
+        _updatingPreferences = true;
+        try
+        {
+            var preferences = BrowserPreferences.Current;
+            _restoreSession.Checked = preferences.RestoreSession;
+            _memorySaver.Checked = preferences.MemorySaverEnabled;
+            _suspendDelay.Value = Math.Clamp(preferences.SuspendAfterMinutes, 1, 240);
+            _suspendDelay.Enabled = preferences.MemorySaverEnabled;
+            _searchEngine.SelectedItem = preferences.SearchEngine;
+            if (!_exceptionsDirty) _memoryExceptions.Text = string.Join(Environment.NewLine, preferences.MemorySaverExceptions);
+        }
+        finally { _updatingPreferences = false; }
+    }
+
+    private void SavePreferences()
+    {
+        if (!BrowserPreferences.Current.Save())
+            MessageBox.Show(this, "O ajuste vale nesta sessão, mas não foi possível salvar suas preferências no computador.",
+                "Salvar preferências", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void SaveMemoryExceptions()
+    {
+        var values = _memoryExceptions.Text.Split(new[] { '\r', '\n', ';', ',' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var hosts = new List<string>();
+        foreach (var value in values)
+        {
+            if (!BrowserPreferences.TryNormalizeExceptionHost(value, out var host))
+            {
+                MessageBox.Show(this, $"Não reconheci o site “{value}”. Use um domínio como exemplo.com ou o endereço completo do site.",
+                    "Exceções de memória", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            hosts.Add(host);
+        }
+        if (hosts.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 200)
+        {
+            MessageBox.Show(this, "Adicione no máximo 200 sites às exceções.", "Exceções de memória", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        BrowserPreferences.Current.MemorySaverExceptions = hosts.ToArray();
+        _exceptionsDirty = false;
+        SavePreferences();
+    }
+
     public void ApplyTheme()
     {
         BackColor = Theme.Chrome;
@@ -147,8 +276,11 @@ public sealed class SettingsTab : TabPage
         foreach (var label in new[] { _brandTitle, _sidebarHint, _footer, _title, _subtitle, _noResults }) label.ForeColor = label.Tag as string == "muted" ? Theme.InkMuted : Theme.Ink;
         _brand.BackColor = _search.BackColor = Theme.Chrome; _searchInput.BackColor = _clearSearch.BackColor = Theme.Surface; _searchInput.ForeColor = Theme.Ink;
         foreach (var card in _cards) card.ApplyTheme();
+        _historyView?.ApplyTheme();
         foreach (var button in _navigation.Values) { button.BackColor = Theme.Chrome; button.Invalidate(); }
         _favorites.BackColor = Theme.Surface; _favorites.ForeColor = Theme.Ink;
+        foreach (var control in new Control[] { _memoryExceptions, _suspendDelay, _searchEngine }) { control.BackColor = Theme.Surface; control.ForeColor = Theme.Ink; }
+        foreach (var control in new Control[] { _restoreSession, _memorySaver }) { control.BackColor = Theme.Surface; control.ForeColor = Theme.Ink; }
         _light.Selected = !Theme.IsDark; _dark.Selected = Theme.IsDark;
         var selected = Theme.CustomAccent ?? Theme.Accent;
         foreach (var color in _colors) { color.Selected = selected.ToArgb() == color.Color.ToArgb(); color.Invalidate(); }
@@ -159,7 +291,8 @@ public sealed class SettingsTab : TabPage
     private void AddNavigation(string name, string glyph)
     {
         var button = new SettingsButton(name, glyph) { Navigation = true, Margin = new Padding(0, 0, 0, 6) };
-        button.Click += (_, _) => SelectSection(name); _navigation.Add(name, button); _nav.Controls.Add(button); _navigationTips.SetToolTip(button, name);
+        button.Click += (_, _) => SelectSection(name);
+        _navigation.Add(name, button); _nav.Controls.Add(button); _navigationTips.SetToolTip(button, name);
     }
     private SettingsCard AddCard(string section, string title, string description, string keywords = "", bool searchable = true)
     {
@@ -178,7 +311,9 @@ public sealed class SettingsTab : TabPage
         _subtitle.Text = searching ? $"Configurações relacionadas a “{query}”." : _section switch
         {
             "Aparência" => "Um visual que combina com você.", "Favoritos" => "Organize seus destinos preferidos.",
+            "Histórico" => "Consulte e gerencie sua navegação sem sair das configurações.",
             "Senhas salvas" => "Cuide das credenciais armazenadas neste perfil.", "Privacidade e proteção" => "Sua navegação, com mais controle.",
+            "Inicialização" => "Continue sua navegação ao abrir o CottonBrowser.", "Desempenho" => "Ajuste o uso de recursos das abas.", "Pesquisa" => "Encontre o que precisa com seu buscador preferido.",
             _ => "Tudo o que você precisa para deixar o navegador do seu jeito."
         };
         foreach (var card in _cards)
@@ -229,6 +364,37 @@ public sealed class SettingsTab : TabPage
     }
     private int CardHeight(SettingsCard card, int width)
     {
+        if (ReferenceEquals(card, _historyCard))
+        {
+            var height = Math.Max(D(width < D(600) ? 560 : 440), _body.ClientSize.Height - D(62));
+            _historyView?.SetBounds(D(24), D(96), Math.Max(1, width - D(48)), height - D(120));
+            return height;
+        }
+        if (ReferenceEquals(card, _sessionCard))
+        {
+            _restoreSession.SetBounds(D(24), D(96), Math.Max(1, width - D(48)), D(32));
+            _sessionNote.SetBounds(D(24), D(141), Math.Max(1, width - D(48)), D(width < D(450) ? 105 : 72));
+            return _sessionNote.Bottom + D(24);
+        }
+        if (ReferenceEquals(card, _searchEngineCard))
+        {
+            _searchEngine.SetBounds(D(24), D(97), Math.Min(D(290), Math.Max(1, width - D(48))), D(32));
+            _searchEngineNote.SetBounds(D(24), D(144), Math.Max(1, width - D(48)), D(66)); return D(231);
+        }
+        if (ReferenceEquals(card, _performanceCard))
+        {
+            var narrow = width < D(470);
+            _memorySaver.SetBounds(D(24), D(96), Math.Max(1, width - D(48)), D(32));
+            _suspendLabel.SetBounds(D(24), D(146), Math.Max(1, width - D(48)), D(30));
+            _suspendDelay.SetBounds(narrow ? D(24) : D(287), narrow ? D(181) : D(143), D(66), D(32));
+            _minutesLabel.SetBounds(narrow ? D(100) : D(363), narrow ? D(184) : D(146), D(78), D(28));
+            var y = narrow ? D(230) : D(193);
+            _exceptionsLabel.SetBounds(D(24), y, Math.Max(1, width - D(48)), D(50));
+            _memoryExceptions.SetBounds(D(24), y + D(51), Math.Max(1, width - D(48)), D(112));
+            _saveExceptions.SetBounds(D(24), y + D(175), Math.Min(D(175), Math.Max(1, width - D(48))), D(36));
+            _memoryNote.SetBounds(D(24), y + D(226), Math.Max(1, width - D(48)), D(narrow ? 105 : 70));
+            return _memoryNote.Bottom + D(25);
+        }
         if (ReferenceEquals(card, _themeCard))
         {
             var tile = Math.Max(1, (width - D(60)) / 2); _light.SetBounds(D(22), D(92), tile, D(140)); _dark.SetBounds(D(38) + tile, D(92), tile, D(140)); return D(254);
@@ -289,7 +455,7 @@ public sealed class SettingsTab : TabPage
         for (var y = 0; y < logo.Height; y++) for (var x = 0; x < width; x++) if (logo.GetPixel(x, y).A == 0 && !outside[x, y]) logo.SetPixel(x, y, Color.White);
         return logo.Clone(new Rectangle(0, 0, width, logo.Height), logo.PixelFormat);
     }
-    protected override void Dispose(bool disposing) { if (disposing) { _brand.Image?.Dispose(); _navigationTips.Dispose(); } base.Dispose(disposing); }
+    protected override void Dispose(bool disposing) { if (disposing) { BrowserPreferences.Changed -= PreferencesChanged; _brand.Image?.Dispose(); _navigationTips.Dispose(); } base.Dispose(disposing); }
     private sealed record BookmarkItem(string Title, string Url);
 
     private sealed class SearchSurface : Panel

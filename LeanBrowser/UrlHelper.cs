@@ -6,17 +6,15 @@ namespace LeanBrowser;
 /// <summary>
 /// Converte o que o usuario digitou na omnibox em uma URL navegavel.
 /// Regras (nesta ordem):
-///   1. Operador de pesquisa                -> busca no Google.
+///   1. Operador de pesquisa                -> busca no serviço escolhido.
 ///   2. localhost / IP, com ou sem porta    -> http://
 ///   3. Dominio com porta                  -> https://
 ///   4. Ja tem esquema explicito           -> usa como esta.
 ///   5. Contem ponto e nao contem espaco   -> https://
-///   6. Qualquer outra coisa               -> busca no Google.
+///   6. Qualquer outra coisa               -> busca no serviço escolhido.
 /// </summary>
 public static partial class UrlHelper
 {
-    private const string SearchEndpoint = "https://www.google.com/search?q=";
-
     // Compilado em tempo de build pelo source generator (nada de Regex
     // interpretado em runtime: menos alocacao e menos CPU no primeiro uso).
     [GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*:", RegexOptions.CultureInvariant)]
@@ -30,16 +28,22 @@ public static partial class UrlHelper
                     RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex LocalHost();
 
-    public static string Normalize(string input)
+    public static string Normalize(string input, string searchEngine = "Google")
     {
         var text = input.Trim();
+        var searchEndpoint = searchEngine?.ToLowerInvariant() switch
+        {
+            "bing" => "https://www.bing.com/search?q=",
+            "duckduckgo" => "https://duckduckgo.com/?q=",
+            _ => "https://www.google.com/search?q="
+        };
 
         if (text.Length == 0)
             return "about:blank";
 
         // Operadores como site: tambem se parecem com esquemas, mas sao buscas.
         if (SearchOperatorPrefix().IsMatch(text))
-            return SearchEndpoint + Uri.EscapeDataString(text);
+            return searchEndpoint + Uri.EscapeDataString(text);
 
         // Verifica host:porta antes do esquema: localhost:3000 e exemplo.com:8443
         // satisfazem a sintaxe de um esquema URI, mas sao enderecos de sites.
@@ -63,7 +67,7 @@ public static partial class UrlHelper
             return "https://" + text;
 
         // Fallback: busca.
-        return SearchEndpoint + Uri.EscapeDataString(text);
+        return searchEndpoint + Uri.EscapeDataString(text);
     }
 
     private static bool HasPort(string text)

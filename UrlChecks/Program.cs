@@ -52,6 +52,13 @@ foreach (var input in searchCases)
 
 Console.WriteLine($"PASS: {addressCases.Length + searchCases.Length} casos de enderecos, portas, esquemas e pesquisas.");
 
+Equal(UrlHelper.Normalize("algodão", "Bing"), "https://www.bing.com/search?q=algod%C3%A3o", "pesquisa no Bing");
+Equal(UrlHelper.Normalize("site:exemplo.com algodão", "DuckDuckGo"), "https://duckduckgo.com/?q=site%3Aexemplo.com%20algod%C3%A3o", "operador no DuckDuckGo");
+Equal(UrlHelper.Normalize("example.com", "Bing"), "https://example.com", "buscador não muda navegação para um site");
+Equal(UrlHelper.Normalize("algodão", "desconhecido"), "https://www.google.com/search?q=algod%C3%A3o", "buscador inválido recebe padrão");
+Equal(OmniboxNavigation.ResolveTarget("pão", null, true, "pão caseiro", searchEngine: "Bing"),
+    "https://www.bing.com/search?q=p%C3%A3o%20caseiro", "sugestão usa o buscador selecionado");
+
 // Enter usa o texto visível, inclusive depois de fechar as sugestões com Esc.
 Equal(OmniboxNavigation.ResolveTarget("receita bolo", "https://example.com", true),
     "https://www.google.com/search?q=receita%20bolo", "pesquisa sem estado de sugestões");

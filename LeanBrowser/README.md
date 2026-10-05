@@ -1,304 +1,211 @@
-# LeanBrowser
+# CottonBrowser
 
-Atualização pelo próprio navegador e publicação de novas versões: [UPDATES.md](../UPDATES.md).
+Navegador para Windows desenvolvido em C# / .NET 8 / WinForms, com o motor
+Microsoft Edge WebView2. Inclui abas, favoritos, downloads, perfis de navegação
+e proteção de anúncios por extensão, filtros de rede e scripts de página.
 
-Navegador minimalista construído sobre o motor web **nativo do sistema**
-(Microsoft Edge WebView2), sem Chromium embutido.
+## Instalar em outro computador
 
-Shell em C# / .NET 8 / WinForms. Bloqueio de anúncios feito por **interceptação
-de rede no motor**, não por injeção de script.
+Envie somente `CottonBrowserSetup.exe`. O instalador contém o navegador, o
+atualizador, o runtime .NET 8 e o instalador offline do Microsoft Edge WebView2
+Runtime para Windows x64. Quando necessário, o setup instala o WebView2 sem
+baixar componentes adicionais durante a instalação.
 
----
+Feche o navegador antes de executar o setup. A instalação fica em
+`%LOCALAPPDATA%\Programs\CottonBrowser`, cria um atalho no menu Iniciar e
+preserva os dados de navegação em AppData.
+
+Consulte [UPDATES.md](../UPDATES.md) para instalação e publicação de versões.
+A edição Android tem [instruções próprias](../CottonMobile/README.md).
 
 ## Compilar e rodar
 
-Na pasta principal (acima desta), execute `run.cmd` para abrir o navegador.
-Se o executável ainda não existir, ele será compilado automaticamente.
-Para recompilar após alterar o código, execute `build.cmd`.
-Os scripts funcionam independentemente da pasta atual do terminal.
+Na pasta principal do repositório, execute `run.cmd`. Ele compila quando o
+executável ainda não existe ou os arquivos de origem mudaram. Use `build.cmd`
+para recompilar manualmente. Os scripts encontram a pasta do projeto mesmo
+quando iniciados de outro diretório.
 
-Nesta máquina, o SDK .NET 8 foi preparado em `..\.tools\dotnet` e é
-detectado automaticamente pelo `build.cmd`. Em outra máquina, instale o SDK
-conforme abaixo. Ter apenas o runtime do .NET não permite compilar.
-
-**Pré-requisitos**
-
-| Item | Como obter |
-|---|---|
-| .NET 8 SDK | `winget install Microsoft.DotNet.SDK.8` |
-| WebView2 Runtime | Já presente no Windows 11 e na maioria dos Win10. Senão: `winget install Microsoft.EdgeWebView2Runtime` |
-
-**Build**
+Para compilar, é necessário o **SDK .NET 8**. O script detecta o SDK local em
+`.tools\dotnet`, quando disponível, ou utiliza o `dotnet` instalado no Windows.
+O primeiro restore pode precisar de acesso ao NuGet.
 
 ```cmd
-cd LeanBrowser
 build.cmd
+run.cmd
 ```
 
-Ou manualmente:
+Os arquivos publicados ficam em `LeanBrowser\dist`: `CottonBrowser.exe`,
+`CottonUpdater.exe` e `Assets\Bridge`. O runtime .NET acompanha a publicação;
+o WebView2 precisa estar instalado para executar essa versão diretamente.
+Mantenha esses arquivos juntos. Para distribuir o aplicativo em um único
+arquivo, use o setup.
+
+Para executar durante o desenvolvimento, na pasta principal:
 
 ```cmd
-dotnet restore
-dotnet publish -c Release -r win-x64 -o .\dist
-.\dist\CottonBrowser.exe
+dotnet run --project LeanBrowser\LeanBrowser.csproj
 ```
 
-Para iterar durante o desenvolvimento: `dotnet run`.
+Para gerar o instalador:
 
-O binário de Release fica em `dist\CottonBrowser.exe` e inclui o runtime .NET 8.
-O WebView2 Runtime ainda precisa estar disponível no Windows.
+```cmd
+build-installer.cmd
+```
 
----
+O resultado fica em `CottonInstaller\dist\CottonBrowserSetup.exe`. A geração
+do setup baixa o instalador offline do WebView2 quando ele ainda não está
+disponível em `.tools\prerequisites`.
 
 ## Atalhos
 
 | Tecla | Ação |
 |---|---|
 | `Ctrl+L` / `Alt+D` | Focar a barra de endereços |
+| `Ctrl+T` | Abrir nova aba |
+| `Ctrl+Shift+T` | Reabrir a última aba normal fechada |
+| `Ctrl+Shift+E` | Pesquisar nas abas abertas |
+| `Ctrl+H` | Abrir o histórico completo |
+| `Ctrl+W` | Fechar a aba selecionada |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Próxima / anterior |
+| `Ctrl+N` | Abrir nova janela |
+| `Ctrl+Shift+N` | Abrir guia anônima |
+| `Ctrl+D` | Adicionar ou atualizar favorito |
+| `Ctrl+J` | Abrir downloads |
+| `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar, diminuir ou repor o zoom |
 | `F5` / `Ctrl+R` | Recarregar |
-| `Esc` | Parar carregamento |
-| `Alt+←` / `Alt+→` | Voltar / Avançar |
-| `Alt+Home` | Página inicial |
-| `Ctrl+Shift+A` | Ligar/desligar o bloqueador |
+| `Esc` | Parar carregamento ou sair da tela cheia |
+| `Alt+←` / `Alt+→` | Voltar / avançar |
+| `Alt+Home` | Abrir a página inicial |
+| `F11` | Alternar tela cheia |
+| `Ctrl+Shift+A` | Alternar a proteção de anúncios e recarregar as abas |
 | `F12` / `Ctrl+Shift+I` | Abrir o inspetor da guia atual |
 
-A opção **Inspecionar página** no menu de três pontos abre o DevTools do
-WebView2. Clique com o botão direito na página e escolha **Inspecionar** para
-examinar um elemento.
-O WebView2 abre o DevTools em uma janela separada.
-
----
+O menu de três pontos e o menu de contexto também oferecem **Inspecionar
+página**. O inspetor abre em uma janela separada do WebView2.
 
 ## Barra de endereços
 
 | Você digita | Resultado |
 |---|---|
-| `https://exemplo.com/a` | usado como está |
-| `exemplo.com` | → `https://exemplo.com` |
-| `localhost:3000` | → `http://localhost:3000` (dev server raramente tem TLS) |
-| `//cdn.exemplo.com` | → `https://cdn.exemplo.com` |
-| `como fazer pão` | → busca no Google |
-| `receita bolo` | → busca (sem ponto de domínio) |
+| `https://exemplo.com/a` | Abre o endereço informado |
+| `exemplo.com` | Abre `https://exemplo.com` |
+| `localhost:3000` | Abre `http://localhost:3000` |
+| `//cdn.exemplo.com` | Abre `https://cdn.exemplo.com` |
+| `como fazer pão` | Pesquisa no buscador escolhido |
 
----
+A barra sugere endereços do histórico local. O X da sugestão remove essa
+entrada. Cada aba mantém seu próprio histórico de navegação.
 
-## Bloqueador de anúncios
+Em **Configurações > Pesquisa**, escolha Google, Bing ou DuckDuckGo. As
+sugestões remotas continuam sendo fornecidas pelo DuckDuckGo, independentemente
+do buscador escolhido; nas abas anônimas elas não são consultadas.
 
-A lista fica embutida no executável, mas é sobrescrevível sem recompilar:
+## Sessão, organização de abas e desempenho
 
-```
-%APPDATA%\LeanBrowser\blocklist.txt
-```
+**Configurações > Inicialização** permite continuar com as abas normais da
+sessão anterior. Um encerramento inesperado oferece recuperar a sessão.
+A recuperação mantém as janelas, a aba selecionada, os grupos, as cores,
+as abas fixadas e o estado de áudio silenciado. Abas anônimas e páginas
+auxiliares não são gravadas. Fechar a última aba explicitamente deixa a
+sessão vazia; fechar a janela preserva suas abas para o próximo início.
+A restauração reabre os endereços e não recupera textos não enviados,
+a posição da página nem o histórico de voltar/avançar.
 
-O app exporta a lista padrão para esse caminho no primeiro início. Um domínio
-por linha; `#` comenta. Formato *hosts file* (`0.0.0.0 dominio.com`) também é
-aceito, então você pode colar trechos de listas públicas.
+Clique com o botão direito numa aba para fixá-la, criar um grupo com nome
+e cor, mover para um grupo ou editar o grupo atual. Abas fixadas ficam
+compactas no início. O ícone de áudio permite silenciar a aba. A lupa na
+faixa de abas, ou `Ctrl+Shift+E`, pesquisa títulos, endereços e grupos.
 
-O contador de bloqueios da página aparece no escudo, à esquerda da URL.
+Em **Configurações > Desempenho**, ative a economia de memória, escolha
+um intervalo de 1 a 240 minutos (10 por padrão) e adicione os sites que
+devem continuar ativos. A suspensão preserva o documento e termina ao
+selecionar a aba. Abas visíveis, carregando, com áudio/vídeo, captura de
+câmera/microfone/tela ou sinais de edição de formulários permanecem ativas.
+Downloads em andamento também impedem a suspensão. São verificações
+conservadoras; páginas que fazem trabalho em segundo plano podem ser
+incluídas nas exceções. Um “z” identifica as abas suspensas.
 
-### Easter egg do algodão
+O histórico (`Ctrl+H`) armazena até 10.000 visitas, mostra datas e horários
+e também aparece dentro das configurações pelo item **Histórico** na barra lateral,
+sem abrir outra aba.
+Ele permite pesquisar sem diferenciar acentos, excluir visitas selecionadas
+ou apagar um período. A exclusão por período também atinge os resultados
+fora da pesquisa atual. Visitas anônimas não são registradas.
 
-Clique cinco vezes rapidamente no ícone de algodão no canto esquerdo da faixa
-de abas para reproduzir o jumpscare do Foxy. O vídeo fica embutido no
-executável, o áudio começa junto e o fundo verde é removido em tempo real no
-canvas. O áudio usa um ganho alto, compressor e distorção leve para o efeito
-cômico. Pressione `Esc` ou clique no vídeo para fechar.
+## Proteção de anúncios
 
-**Aviso de compatibilidade:** `googletagmanager.com` está na lista. Alguns
-sites usam o GTM para carregar funcionalidade legítima e podem quebrar
-parcialmente. Se isso acontecer, remova a linha do `blocklist.txt` do
-`%APPDATA%`.
+A proteção combina três camadas:
 
----
+- **uBlock Origin Lite:** pacote incorporado ao executável, instalado uma vez
+  por perfil antes da navegação.
+- **Lista básica de domínios:** bloqueio de recursos de rede pelo WebView2.
+- **Scripts de página:** tratamento de diálogos reconhecidos, limpeza de
+  elementos publicitários e complemento específico para o YouTube.
 
-## Por que esta arquitetura consome pouco
+`Ctrl+Shift+A` ou **Proteção > Bloquear anúncios** alterna as camadas e
+recarrega as abas. No modo avançado, o menu permite configurar os filtros do
+uBlock e permitir novas janelas na origem atual.
 
-### 1. Zero Chromium embutido
+A lista básica pode ser substituída por
+`%APPDATA%\LeanBrowser\blocklist.txt`: um domínio por linha, com `#` para
+comentários. O formato `0.0.0.0 dominio.com` também é aceito. Se o arquivo não
+existir, o navegador usa a lista incorporada. Alterações nessa lista são
+carregadas ao criar novas abas.
 
-Electron/CEF **empacotam** um Chromium inteiro: ~150 MB em disco e, na prática,
-uma árvore de processos dedicada por aplicação. Duas apps Electron abertas =
-dois Chromium completos na RAM.
+Os filtros incorporados do uBlock acompanham o pacote do aplicativo. A
+proteção do YouTube depende da estrutura do site e não garante remover todos
+os anúncios. A integração dos scripts está documentada em
+[Assets/Recovery/INTEGRACAO.md](Assets/Recovery/INTEGRACAO.md).
 
-O WebView2 usa o runtime **Evergreen** já instalado no Windows: binários
-compartilhados, page-cache do SO compartilhado, e os processos do motor podem
-ser reaproveitados entre hosts. O que este projeto adiciona é apenas o shell
-.NET — poucos MB.
+## Favoritos, senhas e perfil
 
-### 2. Bloqueio no motor, não na página
+`Ctrl+D` salva ou atualiza o favorito da página atual. Os favoritos ficam
+disponíveis no menu e na barra de favoritos. O WebView2 cuida das sugestões,
+salvamento e preenchimento de senhas; essas opções ficam desativadas nas
+guias anônimas.
 
-A abordagem comum (uBlock-like em WebExtension, ou injetar JS na página) exige:
-
-- carregar e parsear centenas de KB de regras **dentro de cada renderer**;
-- rodar JavaScript em cada documento e iframe;
-- varrer o DOM com `MutationObserver` durante toda a vida da página.
-
-Isso é CPU no caminho quente, multiplicada por frame.
-
-Aqui os padrões são registrados como filtros do próprio motor via
-`AddWebResourceRequestedFilter`. Consequências:
-
-- o casamento de padrão roda em **código nativo, no processo do browser**,
-  antes de qualquer marshalling COM;
-- requisições legítimas **nunca saem do motor** — o código gerenciado nem é
-  acordado;
-- o handler em C# só é invocado para requisições que já são anúncio, e o
-  corpo dele é uma atribuição de resposta 403.
-
-Ou seja: o custo total do bloqueio é proporcional ao número de anúncios
-**bloqueados**, não ao número de requisições da página.
-
-> **A armadilha que evitamos:** registrar `AddWebResourceRequestedFilter("*", All)`
-> e decidir no C#. Isso parece equivalente, mas força todas as 200–500
-> requisições de um site moderno a cruzarem a fronteira COM/IPC, virarem
-> objetos .NET e voltarem — segurando a thread de UI no processo. É a diferença
-> entre um pedágio em cada pacote e um filtro na entrada.
-
-Efeito colateral bom: cada requisição barrada é uma conexão TCP + handshake TLS
-+ parse + execução de JS de terceiro que **não acontece**. O bloqueador quase
-sempre economiza mais CPU do que gasta.
-
-### 3. Consolidação de processos
-
-`--process-per-site` faz todos os frames de uma mesma origem compartilharem um
-renderer, em vez de um por aba/iframe. Junto com `--renderer-process-limit=4`,
-`msWebOOUI` e `msPdfOOUI` desligados (menos dois processos de UI), a árvore de
-processos fica bem menor que a de um Chrome comum.
-
-### 4. Subsistemas desligados
-
-Cada `--disable-*` remove código que alocaria memória residente e timers que
-acordariam a CPU em background: component updater, domain reliability, sync,
-Cast/MediaRouter, optimization hints, autofill server, crash reporter. Nenhum
-deles serve a um navegador minimalista.
-
-### 5. Suspensão quando minimizado
-
-Ao minimizar, o app chama `MemoryUsageTargetLevel = Low` e `TrySuspendAsync()`:
-os timers do renderer congelam e boa parte do heap volta para o SO. Uma aba
-pesada cai de centenas de MB para poucas dezenas enquanto está fora de vista.
-
-### 6. GC e UI do host
-
-- GC workstation **não concorrente**: elimina a thread de background do GC. O
-  shell quase não aloca (a página vive no processo do motor), então o GC
-  concorrente só custaria uma thread ociosa e heap extra.
-- `InvariantGlobalization`: não carrega ICU (~30 MB de dados).
-- Toolbar desenhada à mão (`GraphicsPath` + `OptimizedDoubleBuffer`) em vez de
-  `TableLayoutPanel` + `ButtonRenderer`. Repinta em foco/hover/resize, nunca
-  por frame.
-- O contador de bloqueios **não** atualiza a UI a cada requisição barrada — é
-  lido uma única vez, em `NavigationCompleted`. Caso contrário seriam dezenas
-  de invalidações por página.
-
-### 7. O que *não* fizemos de propósito
-
-- **Não** desligamos a GPU. Sem aceleração, a composição volta para a CPU e o
-  consumo **sobe**. "Leve" não é sinônimo de "renderização por software".
-- **Não** desligamos o SmartScreen (`IsReputationCheckingRequired`).
-  Economizaria uma ida à rede por navegação, mas não vale o risco.
-- **Não** usamos `--memory-pressure-off`. Ele *impede* o Chromium de devolver
-  memória sob pressão — o oposto do objetivo.
-
----
-
-## Por que WebView2/C# e não Tauri
-
-Tauri (Rust) tem shell mais enxuto que .NET — uns 20–30 MB a menos de runtime.
-Mas o custo dominante nos dois casos é **a árvore de processos do motor web**,
-que é idêntica. A diferença real está no requisito de bloqueio:
-
-| Plataforma | Interceptação de rede disponível |
+| Dados | Local |
 |---|---|
-| Windows / WebView2 | `AddWebResourceRequestedFilter` — API de primeira classe |
-| macOS / WKWebView | `WKContentRuleList` — JSON compilado, mecanismo totalmente diferente |
-| Linux / WebKitGTK | `WebKitUserContentFilterStore`, ou uma extensão `.so` separada |
+| Favoritos | `%LOCALAPPDATA%\LeanBrowser\bookmarks.json` |
+| Histórico de sugestões | `%LOCALAPPDATA%\LeanBrowser\history.json` |
+| Histórico de downloads | `%LOCALAPPDATA%\LeanBrowser\downloads.json` |
+| Sessão de abas normais | `%LOCALAPPDATA%\LeanBrowser\session.json` |
+| Inicialização, desempenho e buscador | `%LOCALAPPDATA%\LeanBrowser\preferences.json` |
+| Perfil WebView2, cookies e logins | `%LOCALAPPDATA%\LeanBrowser\WebView2` |
 
-Uma solução Tauri multiplataforma exigiria **três** implementações distintas do
-bloqueador, sob `#[cfg(target_os)]`. Para um projeto onde o bloqueio no motor é
-requisito central, o caminho Windows-first entrega o comportamento correto sem
-três caminhos de código divergentes.
+Os diretórios de dados mantêm o nome `LeanBrowser`. O perfil pertence ao
+CottonBrowser e é separado do perfil pessoal do Edge. Instalações e
+atualizações preservam esses dados.
 
-O shell aqui é pequeno e isolado: portar para Tauri depois significa reescrever
-`BrowserForm` e `UI`, mantendo `UrlHelper` e a `blocklist` como estão.
+No modo avançado, a exclusão de senhas salvas exige confirmação. Ela não
+encerra sessões autenticadas nem limpa campos já preenchidos. Mais detalhes
+e verificações estão em [FEATURES.md](FEATURES.md).
 
----
+## Atualizações
 
-## Ideia de evolução
+O navegador consulta a última Release estável do repositório ao abrir e a
+cada três horas. Uma nova versão aparece em um aviso e no menu de três pontos.
+Também é possível usar **Verificar atualizações** ou **Atualizar CottonBrowser**.
 
-Para escalar de ~60 domínios para listas grandes (EasyList tem ~80 mil regras),
-a estratégia de filtros por padrão deixa de escalar: o motor faria N
-comparações por requisição. O caminho nesse ponto é o DevTools Protocol:
+O pacote é baixado pelo aplicativo, conferido com o SHA-256 informado na
+Release e instalado pelo atualizador, que reinicia o navegador. Uma alteração
+nos arquivos de origem só chega às outras instalações depois que uma nova
+Release é publicada. O processo está descrito em [UPDATES.md](../UPDATES.md).
 
-```csharp
-await core.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
-await core.CallDevToolsProtocolMethodAsync("Network.setBlockedURLs", json);
-```
+## Easter egg do algodão
 
-O bloqueio passa a ser resolvido inteiramente dentro do processo do browser,
-com estrutura de dados própria — ao custo de ligar o domínio `Network` do CDP,
-que adiciona instrumentação no renderer. Vale medir antes de trocar.
+Clique cinco vezes rapidamente no ícone de algodão à esquerda da faixa de
+abas para reproduzir o jumpscare do Foxy com vídeo e áudio incorporados.
+Pressione `Esc` ou clique no vídeo para fechar.
 
-## Abas, favoritos e senhas
+## Monitoramento opcional
 
-Consulte [FEATURES.md](FEATURES.md) para classes, integração, atalhos, persistência, segurança e roteiro de validação.
+O envio de eventos de navegação só é ativado quando
+`COTTON_MONITORING_ENDPOINT` e `COTTON_MONITORING_TOKEN` estão configurados.
+O servidor e o painel Admin têm
+[documentação própria](../MonitoringServer/README.md).
 
----
-
-## Atualização dentro do navegador
-
-O CottonBrowser instalado verifica uma nova versão ao iniciar e depois a cada
-3 horas. Quando há uma versão nova, pergunta se você quer instalar agora; se
-adiar, o menu de três pontos mostra **Atualização disponível** e permite
-instalar depois em **Atualizar CottonBrowser**. O download ocorre dentro do
-aplicativo, é conferido com o SHA-256 informado na Release e o navegador
-reinicia após substituir os arquivos. Não é preciso abrir o site do GitHub.
-
-Para o fluxo funcionar, publique uma Release **pública** com tag `vX.Y.Z`
-(`v1.0.1`, por exemplo) usando `.github/workflows/release.yml`. Ela precisa
-conter `CottonBrowser-win-x64.zip`; a versão da tag deve ser maior que a
-versão instalada. O GitHub é apenas a origem automática dos arquivos.
-Sem uma Release pública nova, o navegador não tem atualização para oferecer.
-O código local compilado não chega sozinho às instalações existentes.
-
-Antes de publicar, execute `dotnet run --project ..\BrowserUpdateChecks -c Release`
-para verificar o leitor da Release, o hash e o pacote. O fluxo rejeita URLs de
-download fora do repositório previsto, arquivos maiores que o limite e pacotes
-com hash incorreto. SHA-256 verifica integridade em relação ao metadado da
-Release; isto não substitui assinatura de código do Windows.
-
-## Monitoramento corporativo/parental opcional
-
-O cliente agora registra navegação concluída, aba ativa e termos de pesquisa
-em uma fila limitada executada fora da thread da interface. Por privacidade,
-nenhum dado é transmitido por padrão: o envio só é ativado quando as duas
-variáveis abaixo existem.
-
-```powershell
-$env:COTTON_MONITORING_ENDPOINT = "https://servidor.exemplo/api/telemetry/navigation"
-$env:COTTON_MONITORING_TOKEN = "token-de-ingestao"
-```
-
-O servidor opcional está em `../MonitoringServer`. Ele usa ASP.NET Core e
-SignalR, exige token de ingestão para receber eventos e token Admin para os
-relatórios (`/api/admin/reports/top-sites`, `/api/admin/reports/searches`) e o
-hub `/hubs/navigation`. O armazenamento de teste é limitado a 50 mil eventos
-em memória; `../MonitoringServer/schema.sql` traz o modelo PostgreSQL
-particionado para produção.
-
-```powershell
-$env:COTTON_INGEST_TOKEN = "token-de-ingestao-longo-e-aleatorio"
-$env:COTTON_ADMIN_TOKEN = "token-de-admin-longo-e-aleatorio"
-dotnet run --project ..\MonitoringServer
-```
-
-Com o servidor ativo em `http://localhost:5270`, use `Ctrl+Shift+Alt+M` no
-navegador para abrir o Admin em uma nova aba. O atalho é discreto e só é
-interceptado no modo avançado; para entrar, ainda é obrigatório informar o
-token Admin configurado no servidor.
-
-Use HTTPS, tokens aleatórios e uma política de retenção compatível com a
-legislação e com o consentimento dos usuários monitorados. O RBAC do navegador
-continua ocultando recursos avançados no modo padrão, mas isso é apenas uma
-conveniência visual. A API do servidor exige o token Admin independentemente
-da interface.
+`Ctrl+Shift+Alt+M` abre o painel local em `http://localhost:5270/admin` no
+modo avançado. O servidor precisa estar ativo e o acesso à API exige o
+token Admin configurado nele.
 

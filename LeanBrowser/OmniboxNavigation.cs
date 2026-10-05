@@ -3,7 +3,7 @@ namespace LeanBrowser;
 internal static class OmniboxNavigation
 {
     public static string? ResolveTarget(string input, string? currentUrl, bool wasEdited,
-        string? suggestionText = null, string? suggestionUrl = null)
+        string? suggestionText = null, string? suggestionUrl = null, string searchEngine = "Google")
     {
         if (!string.IsNullOrWhiteSpace(suggestionUrl)) return suggestionUrl;
         var text = (suggestionText ?? input).Trim();
@@ -14,7 +14,7 @@ internal static class OmniboxNavigation
         if (suggestionText is null && !wasEdited && !string.IsNullOrEmpty(currentUrl)
             && string.Equals(text, UrlHelper.ForDisplay(currentUrl), StringComparison.Ordinal))
             return currentUrl;
-        return UrlHelper.Normalize(text);
+        return UrlHelper.Normalize(text, searchEngine);
     }
 }
 

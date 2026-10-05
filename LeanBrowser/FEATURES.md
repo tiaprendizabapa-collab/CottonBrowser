@@ -25,6 +25,7 @@ Fechar a última aba encerra a janela. Links HTTP/HTTPS que solicitam uma nova j
 | Ctrl++ / Ctrl+- / Ctrl+0 | Aumentar, diminuir ou repor o zoom da aba |
 | Lupa / menu de três pontos | Redefinir o zoom para 100% |
 | Favoritos | Adicionar, remover a página atual ou abrir links salvos |
+| Configurações → Histórico | Consultar, pesquisar e apagar visitas dentro das configurações, sem abrir outra aba |
 | Apagar senhas salvas | Apagar todas as senhas do perfil, após confirmação |
 
 Os atalhos existentes permanecem disponíveis. Ctrl+Shift+A afeta o bloqueador da aba atual.
@@ -33,7 +34,9 @@ Ao digitar um endereço conhecido, a barra completa o domínio e destaca a parte
 ## Persistência
 
 - Favoritos: `%LOCALAPPDATA%\LeanBrowser\bookmarks.json`.
-- Histórico para sugestões da barra: `%LOCALAPPDATA%\LeanBrowser\history.json` (até 200 URLs).
+- Histórico de visitas e sugestões da barra: `%LOCALAPPDATA%\LeanBrowser\history.json` (até 10.000 visitas).
+- Sessão de abas normais: `%LOCALAPPDATA%\LeanBrowser\session.json` (URLs, títulos e organização; sem formulários nem abas anônimas).
+- Preferências de inicialização, memória e buscador: `%LOCALAPPDATA%\LeanBrowser\preferences.json`.
 - Perfil WebView2, incluindo dados de login: `%LOCALAPPDATA%\LeanBrowser\WebView2`.
 
 O JSON aceita somente HTTP/HTTPS sem usuário/senha embutidos na URL. Usa substituição por arquivo temporário no mesmo diretório; falhas de leitura ou JSON inválido são informadas e não sobrescrevem os dados existentes. URLs iguais atualizam o título. A classe é destinada à thread da UI de uma instância do app; múltiplas instâncias escrevendo simultaneamente exigem mutex ou SQLite transacional. Títulos e URLs dos favoritos não são criptografados e podem conter informações sensíveis, incluindo parâmetros de consulta.
@@ -62,6 +65,10 @@ Execute, na pasta `LeanBrowser`:
 ```powershell
 .\.tools\dotnet\dotnet.exe build .\LeanBrowser\LeanBrowser.csproj --no-restore
 .\.tools\dotnet\dotnet.exe run --project .\BookmarkChecks\BookmarkChecks.csproj
+.\.tools\dotnet\dotnet.exe run --project .\SessionChecks\SessionChecks.csproj
+.\.tools\dotnet\dotnet.exe run --project .\TabNavigationChecks\TabNavigationChecks.csproj
+.\.tools\dotnet\dotnet.exe run --project .\NavigationHistoryChecks\NavigationHistoryChecks.csproj
+.\.tools\dotnet\dotnet.exe run --project .\TabMemoryChecks\TabMemoryChecks.csproj
 ```
 
 Os testes verificam persistência, Unicode, atualização sem duplicação, remoção, rejeição de esquemas perigosos/credenciais em URL e preservação de arquivo corrompido.
