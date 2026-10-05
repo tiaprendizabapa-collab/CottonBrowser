@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="../LeanBrowser/NavigationHistoryStore.cs" Link="NavigationHistoryStore.cs" />
     <Compile Include="../LeanBrowser/BrowserPreferences.cs" Link="BrowserPreferences.cs" />
+    <Compile Include="../LeanBrowser/BrowserProfiles.cs" Link="BrowserProfiles.cs" />
     <Compile Include="../LeanBrowser/BookmarkStore.cs" Link="BookmarkStore.cs" />
     <Compile Include="../LeanBrowser/UrlHelper.cs" Link="UrlHelper.cs" />
   </ItemGroup>

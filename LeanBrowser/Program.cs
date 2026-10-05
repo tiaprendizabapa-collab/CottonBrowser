@@ -10,14 +10,16 @@ internal static class Program
     private const string SingleInstanceMutexName = "Local\\CottonBrowser.SingleInstance.v1";
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        try { BrowserPaths.Initialize(args); }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "Perfis"); return; }
         // The WebView2 profile is intentionally exclusive. Detect a second
         // launch before the runtime tries to attach to that profile, which
         // otherwise surfaces as an unhelpful COM "Catastrophic failure".
         using var instanceMutex = new Mutex(
             initiallyOwned: true,
-            SingleInstanceMutexName,
+            SingleInstanceMutexName + "." + BrowserPaths.ProfileId,
             out var ownsInstance);
 
         if (!ownsInstance)
@@ -63,8 +65,7 @@ internal static class Program
     private sealed class BrowserApplicationContext : ApplicationContext
     {
         private readonly HashSet<BrowserForm> _windows = new();
-        private readonly BrowserSessionStore _sessions = new(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "session.json"));
+        private readonly BrowserSessionStore _sessions = new(Path.Combine(BrowserPaths.DataDirectory, "session.json"));
         private readonly System.Windows.Forms.Timer _sessionSave = new() { Interval = 750 };
         private bool _starting = true;
         public BrowserApplicationContext()

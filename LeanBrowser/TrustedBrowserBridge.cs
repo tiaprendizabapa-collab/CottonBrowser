@@ -232,7 +232,7 @@ public static class TrustedBrowserBridge
         core.PostWebMessageAsJson(JsonSerializer.Serialize(response, JsonOptions));
     }
 
-    private static bool IsTrustedUiUri(string value) =>
+    internal static bool IsTrustedUiUri(string value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
         && string.Equals(uri.Host, HostName, StringComparison.OrdinalIgnoreCase)

@@ -9,6 +9,10 @@
   <ItemGroup>
     <Compile Include="../LeanBrowser/NavigationHistoryStore.cs" Link="NavigationHistoryStore.cs" />
     <Compile Include="../LeanBrowser/BrowserPreferences.cs" Link="BrowserPreferences.cs" />
+    <Compile Include="../LeanBrowser/BrowserProfiles.cs" Link="BrowserProfiles.cs" />
+    <Compile Include="../LeanBrowser/BookmarkManagerView.cs" Link="BookmarkManagerView.cs" />
+    <Compile Include="../LeanBrowser/NewTabCustomizationView.cs" Link="NewTabCustomizationView.cs" />
+    <Compile Include="../LeanBrowser/UiDialogs.cs" Link="UiDialogs.cs" />
     <Compile Include="../LeanBrowser/BookmarkStore.cs" Link="BookmarkStore.cs" />
     <Compile Include="../LeanBrowser/UrlHelper.cs" Link="UrlHelper.cs" />
     <Compile Include="../LeanBrowser/UI.cs" Link="UI.cs" />

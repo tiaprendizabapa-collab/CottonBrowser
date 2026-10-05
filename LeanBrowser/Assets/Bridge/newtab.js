@@ -30,6 +30,27 @@
     updateLocalTime();
   });
 
+  window.addEventListener("cottonbrowser-home-settings", (event) => {
+    const settings = event.detail;
+    if (!settings || typeof settings !== "object") return;
+    document.body.dataset.homeBackground = settings.background;
+    document.querySelector('.date-line').hidden = !settings.showClock;
+    title.hidden = !settings.showGreeting;
+    document.querySelector('.welcome-copy').hidden = !settings.showGreeting;
+    document.querySelector('.quick-section').hidden = !settings.showShortcuts;
+    const links = document.querySelector('.quick-links');
+    links.replaceChildren();
+    for (const entry of (settings.shortcuts || []).slice(0, 12)) {
+      let url; try { url = new URL(entry.url); } catch { continue; }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
+      const link = document.createElement('a'); link.className = 'quick-link'; link.href = url.href;
+      const mark = document.createElement('span'); mark.className = 'quick-mark mark-google'; mark.setAttribute('aria-hidden','true'); mark.textContent = entry.title.slice(0,2).toUpperCase();
+      const label = document.createElement('span'); label.className = 'quick-label'; label.textContent = entry.title;
+      const arrow = document.createElement('span'); arrow.className = 'quick-arrow'; arrow.textContent = '↗'; arrow.setAttribute('aria-hidden','true');
+      link.append(mark,label,arrow); links.append(link);
+    }
+  });
+
   updateLocalTime();
   window.setInterval(updateLocalTime, 30_000);
 })();

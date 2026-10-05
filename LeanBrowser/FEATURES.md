@@ -9,6 +9,11 @@ Implementação para C# / .NET 8 / WinForms / WebView2, integrada em BrowserForm
 - `BrowserForm.InitializeWebViewAsync()` cria um único CoreWebView2Environment com perfil persistente. O evento `Ready` chama `ConfigureTab`, que aplica configurações, conecta os eventos e instala o bloqueador antes da primeira navegação.
 - `RefreshActiveTab()` reflete apenas a aba selecionada na barra de endereço, no título, no indicador e nos botões. Eventos de abas em segundo plano não alteram a barra da aba ativa.
 - `BookmarkStore.Load()`, `Add(url, title)` e `Remove(url)` persistem os favoritos em JSON. O menu Favoritos captura `CoreWebView2.Source` e `DocumentTitle`; cada link abre uma aba.
+- `BookmarkManagerView` integra pastas, edição, movimento, ordenação e importação/exportação Netscape HTML às configurações. Pastas vazias persistem em `bookmarks.json.folders.json`; favoritos anteriores, sem `Folder`, permanecem na raiz.
+- `BrowserFeatures` integra leitura, tradução, capturas, abas verticais e divisão. `ActiveBrowserTab` acompanha o foco entre os dois WebViews existentes; sair da divisão devolve cada controle à sua aba sem recriar o documento.
+- `ReadingView` extrai texto de uma cópia do artigo no DOM e oferece ajustes locais, sem substituir o documento original. `PageCapture` captura PNG via WebView2/CDP, com limites de dimensões e seleção na prévia.
+- `BrowserPaths` seleciona o diretório do perfil antes de inicializar preferências e sessões. `BrowserProfileStore` mantém o cadastro e abre o executável com `--profile <id>`. Cada perfil tem mutex e ambiente WebView2 próprios.
+- `NewTabCustomizationView` salva preferências de fundo, visibilidade e atalhos. O host envia um evento para a página interna exata; o JavaScript monta links com `textContent` e valida HTTP/HTTPS, sem expor novas operações da ponte a páginas externas.
 - `PasswordManager.Configure(core)` habilita o gerenciador de senhas nativo. `ClearSavedPasswordsAsync(core)` apaga as senhas do perfil compartilhado.
 
 Fechar a última aba encerra a janela. Links HTTP/HTTPS que solicitam uma nova janela por ação do usuário abrem uma aba; pop-ups não solicitados são descartados. Esta implementação abre a URL, mas não preserva `window.opener` ou janelas auxiliares criadas via script; fluxos OAuth que dependem disso precisam de integração com `NewWindowRequested.NewWindow` e deferrals.
@@ -26,6 +31,7 @@ Fechar a última aba encerra a janela. Links HTTP/HTTPS que solicitam uma nova j
 | Lupa / menu de três pontos | Redefinir o zoom para 100% |
 | Favoritos | Adicionar, remover a página atual ou abrir links salvos |
 | Configurações → Histórico | Consultar, pesquisar e apagar visitas dentro das configurações, sem abrir outra aba |
+| Menu de três pontos → Histórico / Ctrl+H | Abrir diretamente a seção Histórico na aba de configurações, reutilizando-a se já estiver aberta |
 | Apagar senhas salvas | Apagar todas as senhas do perfil, após confirmação |
 
 Os atalhos existentes permanecem disponíveis. Ctrl+Shift+A afeta o bloqueador da aba atual.
@@ -38,6 +44,12 @@ Ao digitar um endereço conhecido, a barra completa o domínio e destaca a parte
 - Sessão de abas normais: `%LOCALAPPDATA%\LeanBrowser\session.json` (URLs, títulos e organização; sem formulários nem abas anônimas).
 - Preferências de inicialização, memória e buscador: `%LOCALAPPDATA%\LeanBrowser\preferences.json`.
 - Perfil WebView2, incluindo dados de login: `%LOCALAPPDATA%\LeanBrowser\WebView2`.
+
+Esses caminhos pertencem ao perfil padrão, preservado para compatibilidade.
+Perfis novos usam `%LOCALAPPDATA%\LeanBrowser\Profiles\<id>` para dados,
+preferências, tema e WebView2; `browser-profiles.json` na raiz armazena os nomes,
+com mutex durante alterações para coordenar os processos dos perfis.
+O perfil padrão mantém o tema no diretório roaming usado anteriormente.
 
 O JSON aceita somente HTTP/HTTPS sem usuário/senha embutidos na URL. Usa substituição por arquivo temporário no mesmo diretório; falhas de leitura ou JSON inválido são informadas e não sobrescrevem os dados existentes. URLs iguais atualizam o título. A classe é destinada à thread da UI de uma instância do app; múltiplas instâncias escrevendo simultaneamente exigem mutex ou SQLite transacional. Títulos e URLs dos favoritos não são criptografados e podem conter informações sensíveis, incluindo parâmetros de consulta.
 
@@ -69,9 +81,18 @@ Execute, na pasta `LeanBrowser`:
 .\.tools\dotnet\dotnet.exe run --project .\TabNavigationChecks\TabNavigationChecks.csproj
 .\.tools\dotnet\dotnet.exe run --project .\NavigationHistoryChecks\NavigationHistoryChecks.csproj
 .\.tools\dotnet\dotnet.exe run --project .\TabMemoryChecks\TabMemoryChecks.csproj
+.\.tools\dotnet\dotnet.exe run --project .\BrowserFeatureChecks\BrowserFeatureChecks.csproj
+.\.tools\dotnet\dotnet.exe run --project .\BrowserFeatureChecks\BrowserFeatureChecks.csproj -- --webview
 ```
 
 Os testes verificam persistência, Unicode, atualização sem duplicação, remoção, rejeição de esquemas perigosos/credenciais em URL e preservação de arquivo corrompido.
+
+`BrowserFeatureChecks` também verifica importação/exportação com subpastas e
+pastas vazias, conflitos de edição, diretórios e preferências isolados por perfil,
+layout das novas seções em temas claro/escuro, abas verticais e restauração dos
+controles após a divisão. Com `--webview`, usa perfis temporários e o runtime
+real para testar extração de leitura, captura inteira, isolamento de cookies e
+personalização da nova guia sem interpretar títulos de atalhos como HTML.
 
 Verificação manual pendente em uma sessão gráfica:
 

@@ -47,6 +47,9 @@ public sealed class SettingsTab : TabPage
     private readonly SettingsCard _favoritesCard;
     private readonly SettingsCard _historyCard;
     private HistoryView? _historyView;
+    private BookmarkManagerView? _bookmarkManager;
+    private readonly SettingsCard _newTabCard;
+    private readonly NewTabCustomizationView _newTabCustomization = new();
     private readonly SettingsCard? _passwordCard;
     private readonly SettingsCard _sessionCard;
     private readonly SettingsCard _performanceCard;
@@ -81,12 +84,13 @@ public sealed class SettingsTab : TabPage
         Controls.Add(_workspace); Controls.Add(_sidebar);
         _workspace.Controls.Add(_body); _workspace.Controls.Add(_header);
         _sidebar.Controls.AddRange(new Control[] { _brand, _brandTitle, _sidebarHint, _nav, _footer });
-        _brand.Image = LoadCottonIcon();
+        _brand.Image = Draw.LoadCottonIcon();
         _search.Controls.Add(_searchInput); _search.Controls.Add(_clearSearch);
         _header.Controls.AddRange(new Control[] { _search, _title, _subtitle });
         _body.Controls.Add(_noResults);
         AddNavigation("Geral", "\uE80F"); AddNavigation("Aparência", "\uE790"); AddNavigation("Favoritos", "\uE734");
         AddNavigation("Histórico", "\uE81C");
+        AddNavigation("Nova guia", "\uE710");
         AddNavigation("Inicialização", "\uE777"); AddNavigation("Desempenho", "\uE945"); AddNavigation("Pesquisa", "\uE721");
         if (isAdmin) AddNavigation("Senhas salvas", "\uE72E");
         AddNavigation("Privacidade e proteção", "\uEA18");
@@ -97,6 +101,7 @@ public sealed class SettingsTab : TabPage
         shortcuts.AddRow("Aparência", "Tema claro ou escuro e sua cor de destaque", "\uE790", () => SelectSection("Aparência"));
         shortcuts.AddRow("Favoritos", "Organize os sites que você acessa mais", "\uE734", ShowBookmarks);
         shortcuts.AddRow("Histórico", "Consulte e gerencie as páginas visitadas", "\uE81C", () => SelectSection("Histórico"));
+        shortcuts.AddRow("Nova guia", "Escolha o fundo e seus atalhos", "\uE710", ShowNewTab);
         shortcuts.AddRow("Inicialização", "Recupere as abas da última sessão", "\uE777", () => SelectSection("Inicialização"));
         shortcuts.AddRow("Desempenho", "Economia de memória e sites que ficam ativos", "\uE945", () => SelectSection("Desempenho"));
         shortcuts.AddRow("Pesquisa", "Escolha Google, Bing ou DuckDuckGo", "\uE721", () => SelectSection("Pesquisa"));
@@ -104,6 +109,8 @@ public sealed class SettingsTab : TabPage
         shortcuts.AddRow("Privacidade e proteção", "Acesse as ferramentas de segurança", "\uEA18", () => SelectSection("Privacidade e proteção"));
 
         _historyCard = AddCard("Histórico", "Histórico de navegação", "Pesquise páginas visitadas ou apague visitas e períodos.", "historico histórico visitas páginas apagar excluir");
+        _newTabCard = AddCard("Nova guia", "Personalizar a nova guia", "Escolha o fundo, os elementos visíveis e até 12 atalhos.", "nova guia fundo atalhos personalizar relógio saudacao");
+        _newTabCard.Controls.Add(_newTabCustomization);
         _sessionCard = AddCard("Inicialização", "Ao abrir o navegador", "Suas abas prontas para continuar a navegação.", "sessao sessão restaurar recuperar continuar iniciar abas");
         _sessionCard.Controls.AddRange(new Control[] { _restoreSession, _sessionNote });
         _restoreSession.CheckedChanged += (_, _) =>
@@ -186,6 +193,12 @@ public sealed class SettingsTab : TabPage
 
     public void ReloadBookmarks()
     {
+        _bookmarkManager?.Reload();
+        if (_bookmarkManager is not null)
+        {
+            foreach (var control in new Control[] { _favorites, _emptyFavorites, _refresh, _add, _open, _remove }) control.Visible = false;
+            LayoutPage(); return;
+        }
         var selectedUrl = (_favorites.SelectedItem as BookmarkItem)?.Url;
         _favorites.BeginUpdate();
         try
@@ -200,6 +213,18 @@ public sealed class SettingsTab : TabPage
     }
 
     public void ShowBookmarks() { SelectSection("Favoritos"); if (_favorites.Items.Count != 0) _favorites.Focus(); }
+    public void ShowHistory() { SelectSection("Histórico"); _historyView?.FocusSearch(); }
+    public void ShowNewTab() => SelectSection("Nova guia");
+    internal void ConfigureBookmarks(BookmarkStore store, Action changed)
+    {
+        _bookmarkManager?.Dispose();
+        _bookmarkManager = new BookmarkManagerView(store);
+        _bookmarkManager.OpenRequested += url => FavoriteSelected?.Invoke(url);
+        _bookmarkManager.Changed += changed;
+        _favoritesCard.Controls.Add(_bookmarkManager);
+        foreach (var control in new Control[] { _favorites, _emptyFavorites, _refresh, _add, _open, _remove }) control.Visible = false;
+        LayoutPage();
+    }
 
     internal void ConfigureHistory(NavigationHistoryStore store)
     {
@@ -277,6 +302,7 @@ public sealed class SettingsTab : TabPage
         _brand.BackColor = _search.BackColor = Theme.Chrome; _searchInput.BackColor = _clearSearch.BackColor = Theme.Surface; _searchInput.ForeColor = Theme.Ink;
         foreach (var card in _cards) card.ApplyTheme();
         _historyView?.ApplyTheme();
+        _bookmarkManager?.ApplyTheme(); _newTabCustomization.ApplyTheme();
         foreach (var button in _navigation.Values) { button.BackColor = Theme.Chrome; button.Invalidate(); }
         _favorites.BackColor = Theme.Surface; _favorites.ForeColor = Theme.Ink;
         foreach (var control in new Control[] { _memoryExceptions, _suspendDelay, _searchEngine }) { control.BackColor = Theme.Surface; control.ForeColor = Theme.Ink; }
@@ -312,6 +338,7 @@ public sealed class SettingsTab : TabPage
         {
             "Aparência" => "Um visual que combina com você.", "Favoritos" => "Organize seus destinos preferidos.",
             "Histórico" => "Consulte e gerencie sua navegação sem sair das configurações.",
+            "Nova guia" => "Deixe a página inicial com a sua cara.",
             "Senhas salvas" => "Cuide das credenciais armazenadas neste perfil.", "Privacidade e proteção" => "Sua navegação, com mais controle.",
             "Inicialização" => "Continue sua navegação ao abrir o CottonBrowser.", "Desempenho" => "Ajuste o uso de recursos das abas.", "Pesquisa" => "Encontre o que precisa com seu buscador preferido.",
             _ => "Tudo o que você precisa para deixar o navegador do seu jeito."
@@ -364,6 +391,13 @@ public sealed class SettingsTab : TabPage
     }
     private int CardHeight(SettingsCard card, int width)
     {
+        if (ReferenceEquals(card, _newTabCard) || (ReferenceEquals(card, _favoritesCard) && _bookmarkManager is not null))
+        {
+            var height = Math.Max(D(width < D(600) ? 620 : 490), _body.ClientSize.Height - D(62));
+            var view = ReferenceEquals(card, _newTabCard) ? (Control)_newTabCustomization : _bookmarkManager!;
+            view.SetBounds(D(24), D(96), Math.Max(1, width - D(48)), height - D(120));
+            return height;
+        }
         if (ReferenceEquals(card, _historyCard))
         {
             var height = Math.Max(D(width < D(600) ? 560 : 440), _body.ClientSize.Height - D(62));
@@ -442,19 +476,6 @@ public sealed class SettingsTab : TabPage
         ForeColor = muted ? Theme.InkMuted : Theme.Ink, BackColor = Color.Transparent, Tag = muted ? "muted" : null, AutoEllipsis = true
     };
     private static Color Mix(Color a, Color b, float t) => Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
-    private static Image? LoadCottonIcon()
-    {
-        using var stream = typeof(SettingsTab).Assembly.GetManifestResourceStream("LeanBrowser.Assets.AbapaLogo.png");
-        if (stream is null) return null;
-        using var source = Image.FromStream(stream); using var logo = new Bitmap(source);
-        var width = Math.Min(logo.Width, (int)(logo.Height * 1.08f)); var outside = new bool[width, logo.Height]; var queue = new Queue<Point>();
-        void Enqueue(int x, int y) { if (x < 0 || x >= width || y < 0 || y >= logo.Height || outside[x, y] || logo.GetPixel(x, y).A != 0) return; outside[x, y] = true; queue.Enqueue(new Point(x, y)); }
-        for (var x = 0; x < width; x++) { Enqueue(x, 0); Enqueue(x, logo.Height - 1); }
-        for (var y = 0; y < logo.Height; y++) { Enqueue(0, y); Enqueue(width - 1, y); }
-        while (queue.TryDequeue(out var p)) { Enqueue(p.X - 1, p.Y); Enqueue(p.X + 1, p.Y); Enqueue(p.X, p.Y - 1); Enqueue(p.X, p.Y + 1); }
-        for (var y = 0; y < logo.Height; y++) for (var x = 0; x < width; x++) if (logo.GetPixel(x, y).A == 0 && !outside[x, y]) logo.SetPixel(x, y, Color.White);
-        return logo.Clone(new Rectangle(0, 0, width, logo.Height), logo.PixelFormat);
-    }
     protected override void Dispose(bool disposing) { if (disposing) { BrowserPreferences.Changed -= PreferencesChanged; _brand.Image?.Dispose(); _navigationTips.Dispose(); } base.Dispose(disposing); }
     private sealed record BookmarkItem(string Title, string Url);
 

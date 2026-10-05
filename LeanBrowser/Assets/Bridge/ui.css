@@ -38,6 +38,15 @@
 * { box-sizing: border-box; }
 html, body { min-width: 320px; min-height: 100%; margin: 0; }
 body { background: var(--page); color: var(--ink); }
+[hidden] { display: none !important; }
+.newtab-page[data-home-background="Azul"] { background: linear-gradient(135deg, var(--page), #cde4f4); }
+.newtab-page[data-home-background="Verde"] { background: linear-gradient(135deg, var(--page), #d2e9d6); }
+.newtab-page[data-home-background="Pôr do sol"] { background: linear-gradient(135deg, var(--page), #f8dcc7); }
+@media (prefers-color-scheme: dark) {
+  .newtab-page[data-home-background="Azul"] { background: linear-gradient(135deg, var(--page), #153e60); }
+  .newtab-page[data-home-background="Verde"] { background: linear-gradient(135deg, var(--page), #183f30); }
+  .newtab-page[data-home-background="Pôr do sol"] { background: linear-gradient(135deg, var(--page), #542c44); }
+}
 a { color: inherit; text-decoration: none; }
 button, input { font: inherit; }
 

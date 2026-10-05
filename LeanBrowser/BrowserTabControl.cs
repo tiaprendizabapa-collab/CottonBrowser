@@ -40,6 +40,16 @@ public sealed class BrowserTabControl : TabControl
         AutoScroll = true, AllowDrop = true, BackColor = Theme.Chrome, Padding = new Padding(4, 3, 8, 3)
     };
     public int BrowserTabCount => TabPages.OfType<BrowserTab>().Count();
+    public bool VerticalTabs { get; private set; }
+    public bool VerticalTabsCollapsed { get; private set; }
+    public void SetVerticalTabs(bool enabled, bool collapsed = false)
+    {
+        VerticalTabs = enabled; VerticalTabsCollapsed = collapsed;
+        HeaderStrip.FlowDirection = enabled ? FlowDirection.TopDown : FlowDirection.LeftToRight;
+        HeaderStrip.WrapContents = false;
+        foreach (var header in _headers.Values) header.RefreshMetadata();
+        HeaderStrip.PerformLayout();
+    }
     public event Action<BrowserTab>? CloseRequested;
     public event Action<TabPage>? AuxiliaryCloseRequested;
     public event Action? NewTabRequested;
@@ -205,12 +215,17 @@ public sealed class BrowserTabControl : TabControl
         _toolTip.SetToolTip(_brandLabel, "CottonBrowser — clique 5 vezes rapidamente");
         try
         {
-            using var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            if (icon is not null)
+            using var logo = Draw.LoadCottonIcon();
+            if (logo is not null)
             {
                 _brandIcon = new Bitmap(24, 24);
                 using var graphics = Graphics.FromImage(_brandIcon);
-                graphics.DrawIcon(icon, new Rectangle(0, 0, 24, 24));
+                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                var scale = Math.Min(24f / logo.Width, 24f / logo.Height);
+                var width = logo.Width * scale;
+                var height = logo.Height * scale;
+                graphics.DrawImage(logo, (24f - width) / 2, (24f - height) / 2, width, height);
                 _brandLabel.Image = _brandIcon;
             }
         }
@@ -239,7 +254,7 @@ public sealed class BrowserTabControl : TabControl
         {
             if (other == tab) continue;
             var bounds = _headers[other].RectangleToScreen(_headers[other].ClientRectangle);
-            if (screenPosition.X < bounds.Left + bounds.Width / 2) break;
+            if (VerticalTabs ? screenPosition.Y < bounds.Top + bounds.Height / 2 : screenPosition.X < bounds.Left + bounds.Width / 2) break;
             targetIndex++;
         }
         if (targetIndex == TabPages.IndexOf(tab)) return;
@@ -459,7 +474,7 @@ public sealed class BrowserTabControl : TabControl
         private bool _dragCandidate;
         private bool _dragCanceled;
         private Point _dragOrigin;
-        private bool IsPinned => _tab is BrowserTab { IsPinned: true };
+        private bool IsPinned => _owner.VerticalTabs ? _owner.VerticalTabsCollapsed : _tab is BrowserTab { IsPinned: true };
         public bool AudioPlaying { get; private set; }
         public bool AudioMuted { get; private set; }
         private bool HasAudioControl => AudioPlaying || AudioMuted;
@@ -488,7 +503,7 @@ public sealed class BrowserTabControl : TabControl
             AudioPlaying = AudioMuted = false;
             if (_tab is BrowserTab tab && TryGetAudio(tab, out var playing, out var muted))
             { AudioPlaying = playing; AudioMuted = muted; }
-            Width = LogicalToDeviceUnits(IsPinned ? (HasAudioControl ? 74 : 48) : 228);
+            Width = LogicalToDeviceUnits(_owner.VerticalTabs ? (_owner.VerticalTabsCollapsed ? 56 : 212) : IsPinned ? (HasAudioControl ? 74 : 48) : 228);
             Cursor = Cursors.Hand;
             Invalidate();
         }

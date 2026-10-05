@@ -103,10 +103,10 @@ jobs:
         shell: pwsh
         run: dotnet run --project MediaDownloadChecks -c Release
 
-      - name: Verificar sessão, abas, histórico e economia de memória
+      - name: Verificar sessão, abas, histórico, favoritos e recursos de navegação
         shell: pwsh
         run: |
-          foreach ($project in @('SessionChecks', 'TabNavigationChecks', 'UrlChecks', 'NavigationHistoryChecks', 'TabMemoryChecks')) {
+          foreach ($project in @('SessionChecks', 'TabNavigationChecks', 'UrlChecks', 'NavigationHistoryChecks', 'TabMemoryChecks', 'BookmarkChecks', 'BrowserFeatureChecks')) {
             dotnet run --project $project
             if ($LASTEXITCODE -ne 0) { throw "Falha nas verificações: $project" }
           }
