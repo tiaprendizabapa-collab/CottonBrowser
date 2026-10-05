@@ -60,6 +60,12 @@ O WebView2 Runtime ainda precisa estar disponível no Windows.
 | `Alt+←` / `Alt+→` | Voltar / Avançar |
 | `Alt+Home` | Página inicial |
 | `Ctrl+Shift+A` | Ligar/desligar o bloqueador |
+| `F12` / `Ctrl+Shift+I` | Abrir o inspetor da guia atual |
+
+O botão **Inspecionar** ao lado da barra de endereços e a opção **Inspecionar
+página** no menu de três pontos abrem o DevTools do WebView2. Clique com o
+botão direito na página e escolha **Inspecionar** para examinar um elemento.
+O WebView2 abre o DevTools em uma janela separada.
 
 ---
 
@@ -73,6 +79,21 @@ O WebView2 Runtime ainda precisa estar disponível no Windows.
 | `//cdn.exemplo.com` | → `https://cdn.exemplo.com` |
 | `como fazer pão` | → busca no Google |
 | `receita bolo` | → busca (sem ponto de domínio) |
+
+### Permissão permanente para HTTP
+
+Depois de aceitar uma conexão HTTP, o acesso HTTP ao mesmo host fica liberado
+em qualquer porta enquanto a guia permanecer aberta. Isso permite que
+aplicações internas enviem o login a um backend em outra porta. Para manter a
+permissão entre sessões, abra **⋮ > Proteção > Permitir HTTP permanentemente
+neste site**. A permissão permanente vale para a origem exata (protocolo, host e
+porta), incluindo todas as páginas dessa origem. Para revogá-la, volte a uma
+página HTTP dessa origem e escolha **Remover permissão HTTP permanente** no
+mesmo menu.
+
+As permissões ficam neste computador em
+`%LOCALAPPDATA%\LeanBrowser\site-exceptions.json`. Sites HTTP não criptografam
+senhas nem outros dados enviados.
 
 ---
 

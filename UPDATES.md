@@ -17,6 +17,17 @@ continua sendo `CottonBrowser-win-x64.zip`; a Release também oferece
 script. O instalador, o navegador e o atualizador incluem o runtime .NET 8;
 o WebView2 Runtime ainda precisa estar disponível no Windows.
 
+Se o navegador foi instalado pelo `CottonBrowserSetup.exe`, baixar ou atualizar
+os arquivos-fonte do GitHub não troca o executável instalado. Para receber a
+versão mais recente, use **⋮ > Atualizar CottonBrowser** no navegador ou execute
+o `CottonBrowserSetup.exe` da [Release mais recente](https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/latest).
+Feche o navegador antes de executar o setup. O perfil de navegação é preservado.
+
+Se o navegador é aberto pelo `run.cmd` da pasta do repositório, esse comando
+recompila automaticamente quando os arquivos-fonte mudam. Para atualizar o
+executável manualmente, execute `build.cmd` e depois `run.cmd`. O menu Iniciar,
+quando instalado pelo setup, abre outra cópia em `%LOCALAPPDATA%\Programs\CottonBrowser`.
+
 O navegador verifica em segundo plano a última Release estável do repositório
 `tiaprendizabapa-collab/CottonBrowser` ao abrir e a cada três horas. Uma nova
 versão aparece no menu de três pontos, com um ponto colorido no botão. Também é
@@ -29,19 +40,20 @@ backup dos arquivos substituídos, instala o novo executável e os arquivos da
 Central e reinicia o programa. Perfil WebView2, histórico, favoritos e outras
 preferências ficam em AppData e não são substituídos.
 
-## Publicar uma versão
+## Publicar atualizações
 
-1. Mescle as alterações na `main` e escolha uma versão maior que a atual,
-   começando por `v1.0.1`.
-2. Crie e envie uma tag dessa versão: `git tag v1.0.1` e
-   `git push origin v1.0.1`.
-3. O workflow de GitHub Actions compila o navegador e o atualizador, cria
-   `CottonBrowser-win-x64.zip` e `CottonBrowserSetup.exe` e publica a Release. O navegador só verá a
-   atualização depois que o pacote estiver publicado.
+Ao mesclar alterações na `main`, o GitHub Actions compila o navegador e o
+atualizador, cria `CottonBrowser-win-x64.zip` e `CottonBrowserSetup.exe` e
+publica uma Release estável automaticamente. A versão recebe o próximo número
+de patch acima da Release mais recente. Não é preciso criar uma tag nem executar
+comandos no PowerShell para distribuir atualizações normais.
 
-As próximas versões seguem o mesmo formato de tag, por exemplo `v1.1.0`.
-Commits ou PRs, sozinhos, não são distribuídos automaticamente. A primeira
-instalação desta funcionalidade precisa ser feita manualmente; versões antigas
-não possuem o código para consultar a API. O pacote requer WebView2 Runtime
-no Windows x64. Instalações em pastas sem permissão
-de escrita, como `Program Files`, precisam de um instalador com elevação.
+O navegador verifica a Release publicada ao abrir e a cada três horas. Ele só
+oferece a instalação depois que a compilação do GitHub Actions termina e os
+arquivos estão disponíveis. Para publicar uma versão manualmente, ainda é possível
+enviar uma tag `vMAJOR.MINOR.PATCH` maior que a versão publicada.
+
+A primeira instalação do recurso de atualização precisa ser manual em versões
+antigas que não consultam a API do GitHub. O pacote requer WebView2 Runtime no
+Windows x64. Instalações em pastas sem permissão de escrita, como `Program
+Files`, precisam de um instalador com elevação.

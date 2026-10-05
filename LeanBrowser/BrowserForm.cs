@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -11,12 +12,22 @@ public sealed class BrowserForm : Form
 {
     private const string HomePage = TrustedBrowserBridge.NewTabUrl;
     private const int ResizeBorder = 6;
+    private static readonly object BrowserEnvironmentLock = new();
+    private static readonly string BrowserUserDataDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "WebView2");
+    private static readonly AdProtection SharedAdProtection = new();
+    private static Task<CoreWebView2Environment>? _sharedBrowserEnvironmentTask;
 
     private readonly Panel      _toolbar  = new();
     private readonly BookmarksBar _bookmarksBar = new();
     private readonly ToolButton _back     = new("\uE72B", "Voltar");
     private readonly ToolButton _forward  = new("\uE72A", "Avancar");
     private readonly ToolButton _reload   = new("\uE72C", "Recarregar");
+    private readonly ToolButton _inspect  = new("\uEC7A", "Inspecionar página (F12)", 112)
+    {
+        Text = "Inspecionar",
+        Cursor = Cursors.Hand
+    };
     private readonly Omnibox    _omnibox  = new();
     private readonly SuggestionPanel _suggestionPanel = new();
     private readonly NavigationHistoryStore _navigationHistory = new(Path.Combine(
@@ -49,14 +60,8 @@ public sealed class BrowserForm : Form
     private readonly WindowCaptionButton _minimizeButton = new(WindowCaptionAction.Minimize);
     private readonly WindowCaptionButton _maximizeButton = new(WindowCaptionAction.Maximize);
     private readonly WindowCaptionButton _closeButton = new(WindowCaptionAction.Close);
-    private readonly ContextMenuStrip _overflowMenu = new()
-    {
-        ShowImageMargin = false,
-        ShowCheckMargin = false,
-        AutoClose = true,
-        AutoSize = true,
-        Padding = new Padding(4)
-    };
+    private readonly BrowserOverflowMenu _overflowMenu = new();
+    private BrowserMenuZoom _menuZoom = null!;
     private readonly OverflowDismissFilter _overflowDismissFilter;
     private readonly System.Windows.Forms.Timer _overflowOutsideClickTimer = new() { Interval = 15 };
     private bool _overflowAwaitingRelease;
@@ -64,22 +69,26 @@ public sealed class BrowserForm : Form
     private readonly BrowserUpdateService _updates = new();
     private readonly CancellationTokenSource _updateLifetime = new();
     private readonly System.Windows.Forms.Timer _updatePoll = new() { Interval = 3 * 60 * 60 * 1000 };
-    private readonly ToolStripMenuItem _updateItem = new("Atualizar CottonBrowser");
+    private readonly BrowserMenuItem _updateItem = new("Atualizar CottonBrowser", "\uE895");
+    private readonly BrowserMenuItem _updateBanner = new("Atualização disponível", "\uE895") { IsBanner = true, Visible = false };
     private BrowserUpdate? _availableUpdate;
-    private Version? _offeredUpdateVersion;
+    private static Version? _offeredUpdateVersion;
     private bool _updateBusy;
+    private readonly string _initialUrl;
+    private readonly bool _initialIsPrivate;
+    private readonly TaskCompletionSource<bool> _initialTabReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task<bool> InitialTabReady => _initialTabReady.Task;
     private readonly string _themePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "theme.txt");
     private readonly string _accentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser", "accent.txt");
     private readonly AccessControl _access = new();
     private readonly NavigationTelemetry _telemetry;
     private SettingsTab? _settingsTab;
     private ProfileTab? _profileTab;
-    private readonly AdProtection _adProtection = new();
+    private readonly AdProtection _adProtection = SharedAdProtection;
     private readonly SiteAllowlist _siteAllowlist = new(new SiteExceptionStore());
     private readonly ISecretStore _secrets = new DpapiSecretStore();
     private readonly WebRiskReputationService _urlReputation;
     private readonly PermissionPolicy _permissionPolicy = new();
-    private bool _permissionCenterOpening;
     private bool _changingProtection;
     private bool _protectionFailureShown;
     private readonly BookmarkStore _bookmarks = new(Path.Combine(
@@ -87,7 +96,7 @@ public sealed class BrowserForm : Form
     private readonly DownloadHistoryStore _downloadHistory = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "downloads.json"));
     private readonly Dictionary<CoreWebView2DownloadOperation, DownloadEntry> _activeDownloads = new();
-    private readonly Dictionary<Guid, int> _lastPersistedDownloadPercent = new();
+    private readonly Dictionary<Guid, long> _lastPersistedDownloadTick = new();
     private DownloadsTab? _downloadsTab;
     private int _downloadRefreshPending;
     private BrowserTabManager? _tabs;
@@ -96,11 +105,15 @@ public sealed class BrowserForm : Form
     private int _brandClickCount;
     private long _lastBrandClick;
     private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _newTabContextItems = new();
+    private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _inspectContextItems = new();
     private readonly Dictionary<CoreWebView2, string> _contextMenuLinks = new();
     private WebView2? _web => _tabs?.Active?.Web;
     private AdBlocker? _blocker => _tabs?.Active?.Blocker;
 
     private CoreWebView2? _core => _web?.CoreWebView2;
+
+    public event Action? NewWindowRequested;
+    public event Func<string, bool, Task<bool>>? DetachedTabWindowRequested;
     private bool _loading;
     private bool _omniboxDirty;   // usuario esta editando: nao sobrescrever
     private bool _updatingOmnibox;
@@ -116,8 +129,12 @@ public sealed class BrowserForm : Form
     private string? _lastScreenName;
     private Rectangle _lastScreenWorkArea;
 
-    public BrowserForm()
+    public BrowserForm(string? initialUrl = null, bool initialIsPrivate = false)
     {
+        _initialUrl = string.IsNullOrWhiteSpace(initialUrl) ? HomePage : initialUrl;
+        _initialIsPrivate = initialIsPrivate;
+        _tabView.TabDraggedOutside += OnTabDraggedOutside;
+
         SuspendLayout();
 
         _telemetry = new NavigationTelemetry(_access.UserName);
@@ -173,8 +190,8 @@ public sealed class BrowserForm : Form
         _bookmarksBar.OpenRequested += async (url, newTab) =>
         {
             if (!BookmarkStore.IsWebUrl(url)) return;
-            if (newTab || _core is null) await OpenTabAsync(url, _tabs?.Active?.IsPrivate == true);
-            else _core.Navigate(url);
+            if (newTab) await OpenTabAsync(url, _tabs?.Active?.IsPrivate == true);
+            else NavigateCurrent(url);
         };
         Controls.Add(_tabView);
         Controls.Add(_bookmarksBar);
@@ -321,6 +338,9 @@ public sealed class BrowserForm : Form
             if (_loading) _core?.Stop();
             else          _core?.Reload();
         };
+        _inspect.Click += (_, _) => OpenInspector();
+        _inspect.Enabled = false;
+        _zoomTip.SetToolTip(_inspect, "Inspecionar página (F12)");
         _omnibox.Favorite.Click += (_, _) => AddBookmark();
         _omnibox.Zoom.Click += (_, _) => ChangeZoom(0);
         _zoomTip.SetToolTip(_omnibox.Zoom, "Redefinir zoom para 100%");
@@ -353,6 +373,7 @@ public sealed class BrowserForm : Form
         _toolbar.Controls.Add(_forward);
         _toolbar.Controls.Add(_reload);
         _toolbar.Controls.Add(_omnibox);
+        _toolbar.Controls.Add(_inspect);
 
         _toolbar.Resize += (_, _) => LayoutToolbar();
         _toolbar.LocationChanged += (_, _) => LayoutSuggestions();
@@ -381,7 +402,15 @@ public sealed class BrowserForm : Form
         x += _reload.Width + gap + 6;
 
         _omnibox.Location = new Point(x, (_toolbar.Height - 1 - _omnibox.Height) / 2);
-        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin);
+        var overflowWidth = ReferenceEquals(_overflowButton.Parent, _toolbar)
+            ? _overflowButton.Width + gap
+            : 0;
+        _omnibox.Width = Math.Max(120, _toolbar.Width - x - margin - overflowWidth
+            - gap - _inspect.Width);
+        _inspect.Location = new Point(_omnibox.Right + gap, y);
+        if (overflowWidth > 0)
+            _overflowButton.Location = new Point(_toolbar.Width - margin - _overflowButton.Width,
+                (_toolbar.Height - _overflowButton.Height) / 2);
         LayoutSuggestions();
     }
 
@@ -428,61 +457,74 @@ public sealed class BrowserForm : Form
         _tabView.CloseRequested += tab =>
         {
             _tabs?.Close(tab);
-            if (_tabView.BrowserTabCount == 0) Close();
+            if (_tabView.TabCount == 0) Close();
         };
-        _tabView.AuxiliaryCloseRequested += tab =>
-        {
-            if (tab == _settingsTab)
-            {
-                _tabView.TabPages.Remove(tab);
-                tab.Dispose();
-                _settingsTab = null;
-            }
-            else if (tab == _profileTab)
-            {
-                _tabView.TabPages.Remove(tab);
-                tab.Dispose();
-                _profileTab = null;
-            }
-            else if (tab == _downloadsTab)
-            {
-                _tabView.TabPages.Remove(tab);
-                tab.Dispose();
-                _downloadsTab = null;
-            }
-        };
+        _tabView.AuxiliaryCloseRequested += CloseAuxiliaryTab;
         _overflowButton.Click += (_, _) => ShowOverflowMenu(_overflowButton);
         _overflowButton.Paint += (_, e) => PaintOverflowButton(e.Graphics);
         _overflowButton.MouseEnter += (_, _) => _overflowButton.Invalidate();
         _overflowButton.MouseLeave += (_, _) => _overflowButton.Invalidate();
-        var privateTab = new ToolStripMenuItem("Nova guia anônima (Ctrl+Shift+N)");
+        var newTab = new BrowserMenuItem("Nova guia", "\uE710", "Ctrl+T");
+        newTab.Click += async (_, _) => await OpenNewTabAsync(_tabs?.Active?.IsPrivate == true);
+        var newWindow = new BrowserMenuItem("Nova janela", "\uE8A7", "Ctrl+N");
+        newWindow.Click += (_, _) => NewWindowRequested?.Invoke();
+        var privateTab = new BrowserMenuItem("Nova guia anônima", "\uE727", "Ctrl+Shift+N");
         privateTab.Click += async (_, _) => await OpenNewTabAsync(isPrivate: true);
-        var browserCenter = new ToolStripMenuItem("Central do navegador");
-        browserCenter.Click += async (_, _) => await OpenTabAsync(TrustedBrowserBridge.UiUrl);
-        var configuration = new ToolStripMenuItem("Configurações");
+        var configuration = new BrowserMenuItem("Configurações", "\uE713");
         configuration.Click += (_, _) => OpenSettings();
-        var profile = new ToolStripMenuItem("Perfil");
+        var userName = _access.UserName.Split('\\').Last();
+        var profile = new BrowserMenuItem("Perfil")
+        {
+            IsProfile = true,
+            Avatar = userName.Length == 0 ? "P" : userName[..1].ToUpperInvariant(),
+            Detail = userName + " · " + _access.ModeLabel
+        };
         profile.Click += (_, _) => OpenProfile();
-        var downloads = new ToolStripMenuItem("Downloads");
+        var downloads = new BrowserMenuItem("Downloads", "\uE896", "Ctrl+J");
         downloads.Click += (_, _) => OpenDownloads();
-        var resetZoom = new ToolStripMenuItem("Redefinir zoom (100%)");
-        resetZoom.Click += (_, _) => ChangeZoom(0);
+        var history = new BrowserMenuItem("Histórico recente", "\uE81C");
+        history.DropDownItems.Add(new BrowserMenuItem("Nenhuma página recente") { Enabled = false });
+        history.DropDownOpening += (_, _) => PopulateHistoryMenu(history);
+        var favorites = new BrowserMenuItem("Favoritos", "\uE734");
+        favorites.DropDownItems.Add(new BrowserMenuItem("Adicionar esta página"));
+        favorites.DropDownOpening += (_, _) => PopulateFavoritesMenu(favorites);
+        _menuZoom = new BrowserMenuZoom(ChangeZoom, () =>
+        {
+            _overflowMenu.Close();
+            _browserFullscreen = !_browserFullscreen;
+            SynchronizeFullscreen();
+        });
+        var print = new BrowserMenuItem("Imprimir…", "\uE749", "Ctrl+P");
+        print.Click += (_, _) => PrintCurrentPage();
+        var find = new BrowserMenuItem("Localizar na página…", "\uE721", "Ctrl+F");
+        find.Click += async (_, _) => await FindInCurrentPageAsync();
+        var inspect = new BrowserMenuItem("Inspecionar página", "\uEC7A", "F12");
+        inspect.Click += (_, _) => OpenInspector();
+        var exit = new BrowserMenuItem("Sair", "\uE8BB");
+        exit.Click += (_, _) => Close();
+        _updateBanner.Click += async (_, _) =>
+        {
+            if (_availableUpdate is { } update) await InstallUpdateAsync(update);
+        };
         _updateItem.Click += async (_, _) =>
         {
             var update = _availableUpdate ?? await CheckForUpdatesAsync(manual: true);
             if (update is not null) await InstallUpdateAsync(update);
         };
-        var protection = new ToolStripMenuItem("Proteção");
-        var protectionEnabled = new ToolStripMenuItem("Bloquear anúncios (Ctrl+Shift+A)");
+        var protection = new BrowserMenuItem("Proteção", "\uEA18");
+        var protectionEnabled = new BrowserMenuItem("Bloquear anúncios", "\uEA18", "Ctrl+Shift+A");
         protectionEnabled.Click += async (_, _) => await ToggleProtectionAsync();
-        var allowPopups = new ToolStripMenuItem("Permitir novas janelas neste site");
+        var allowPopups = new BrowserMenuItem("Permitir novas janelas neste site", "\uE8A7");
         allowPopups.Click += (_, _) =>
         {
-            if (_tabs?.Active is { } tab)
+            if (_access.IsAdvancedMode && _tabs?.Active is { } tab)
                 tab.Popups.AllowCurrentOrigin(!tab.Popups.AllowedForCurrentOrigin);
         };
-        var protectionStatus = new ToolStripMenuItem { Enabled = false };
-        var settings = new ToolStripMenuItem("Configurar filtros de anúncios");
+        var allowHttpPermanently = new BrowserMenuItem("Permitir HTTP permanentemente neste site", "\uE72E");
+        allowHttpPermanently.ToolTipText = "Permite HTTP para a origem atual; os dados não serão criptografados.";
+        allowHttpPermanently.Click += (_, _) => TogglePersistentHttpPermission();
+        var protectionStatus = new BrowserMenuItem("", "\uE946") { Enabled = false };
+        var settings = new BrowserMenuItem("Configurar filtros de anúncios", "\uE71C");
         settings.Click += async (_, _) =>
         {
             if (!_access.IsAdvancedMode) return;
@@ -495,18 +537,39 @@ public sealed class BrowserForm : Form
             allowPopups.Checked = _tabs?.Active?.Popups.AllowedForCurrentOrigin == true;
             allowPopups.Visible = _access.IsAdvancedMode;
             allowPopups.Enabled = _access.IsAdvancedMode && _adProtection.Enabled && BookmarkStore.IsWebUrl(_core?.Source ?? "");
+            var httpUri = CurrentHttpUri();
+            allowHttpPermanently.Visible = httpUri is not null;
+            if (httpUri is not null)
+            {
+                var permanentlyAllowed = _siteAllowlist.IsAllowed(httpUri);
+                allowHttpPermanently.Checked = permanentlyAllowed;
+                allowHttpPermanently.Text = permanentlyAllowed
+                    ? "Remover permissão HTTP permanente"
+                    : "Permitir HTTP permanentemente neste site";
+            }
             settings.Visible = _access.IsAdvancedMode;
             settings.Enabled = _access.IsAdvancedMode && _adProtection.Available;
             protectionStatus.Text = !_adProtection.Enabled ? "Proteção pausada" :
                 _adProtection.Available ? "uBlock Origin Lite ativo" : "Somente bloqueio básico ativo";
+            PrepareSubmenu(protection);
         };
-        protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, settings, protectionStatus });
-        _overflowMenu.Items.AddRange(new ToolStripItem[] { privateTab, new ToolStripSeparator(),
-            browserCenter, configuration, profile, downloads, resetZoom, _updateItem, protection });
-        _overflowMenu.Font = new Font(Theme.UiFont, 9.5f);
-        _overflowMenu.BackColor = Theme.Surface;
-        _overflowMenu.ForeColor = Theme.Ink;
-        _overflowMenu.Renderer = new OverflowMenuRenderer();
+        protection.DropDownItems.AddRange(new ToolStripItem[] { protectionEnabled, allowPopups, allowHttpPermanently, settings,
+            new ToolStripSeparator(), protectionStatus });
+        _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, newWindow, privateTab,
+            new ToolStripSeparator(), profile, history, downloads, favorites, protection,
+            new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find, inspect,
+            new ToolStripSeparator(), configuration, _updateItem, exit });
+        _overflowMenu.Opening += (_, _) =>
+        {
+            var ready = _tabs?.Active?.Navigation.IsReady == true;
+            print.Enabled = find.Enabled = ready;
+            inspect.Enabled = _core is not null;
+            history.Enabled = _tabs?.Active?.IsPrivate != true;
+            _menuZoom.SetState(_web?.ZoomFactor ?? 1, ready, _windowFullscreen);
+            _updateBanner.Visible = _availableUpdate is not null;
+            _updateBanner.Enabled = !_updateBusy;
+            _updateBanner.Detail = _availableUpdate is { } update ? "Instalar versão " + update.Tag : "";
+        };
         _tabView.SelectedIndexChanged += (_, _) =>
         {
             _overflowMenu.Close();
@@ -553,23 +616,105 @@ public sealed class BrowserForm : Form
             _overflowMenu.Close();
             return;
         }
-        _overflowMenu.PerformLayout();
-        var popupSize = _overflowMenu.GetPreferredSize(Size.Empty);
+        HideSuggestions();
+        _updateBanner.Visible = _availableUpdate is not null;
         var anchorPoint = anchor.PointToScreen(new Point(anchor.Width, anchor.Height + 1));
-        var clientOrigin = PointToScreen(Point.Empty);
-        var clientBounds = new Rectangle(clientOrigin, ClientSize);
+        var bounds = OverflowMenuBounds(anchor);
+        var top = Math.Clamp(anchorPoint.Y, bounds.Top, Math.Max(bounds.Top, bounds.Bottom - 1));
+        // Em janelas baixas, o menu usa a altura disponível e rolagem nativa.
+        if (bounds.Bottom - top < LogicalToDeviceUnits(200)) top = bounds.Top;
+        _overflowMenu.ApplyTheme();
+        _overflowMenu.ConstrainTo(new Size(bounds.Width, bounds.Bottom - top), DeviceDpi);
+        var popupSize = _overflowMenu.GetPreferredSize(Size.Empty);
+        var x = Math.Clamp(anchorPoint.X - popupSize.Width, bounds.Left,
+            Math.Max(bounds.Left, bounds.Right - popupSize.Width));
+        _overflowMenu.Show(new Point(x, top));
+    }
 
-        // Mantém o painel dentro da janela; perto da borda direita ele abre
-        // para a esquerda, como nos menus compactos dos navegadores atuais.
-        var x = Math.Min(anchorPoint.X - popupSize.Width, clientBounds.Right - popupSize.Width - 8);
-        x = Math.Max(clientBounds.Left + 8, x);
+    private Rectangle OverflowMenuBounds(Control anchor)
+    {
+        var bounds = Rectangle.Intersect(RectangleToScreen(ClientRectangle), Screen.FromControl(anchor).WorkingArea);
+        if (bounds.Width < 1 || bounds.Height < 1) bounds = Screen.FromControl(anchor).WorkingArea;
+        var inset = Math.Min(LogicalToDeviceUnits(6), Math.Min(bounds.Width, bounds.Height) / 4);
+        bounds.Inflate(-inset, -inset);
+        return bounds;
+    }
 
-        var y = anchorPoint.Y;
-        if (y + popupSize.Height > clientBounds.Bottom - 8)
-            y = anchorPoint.Y - popupSize.Height - 1;
-        y = Math.Max(clientBounds.Top + 8, y);
+    private void PrepareSubmenu(BrowserMenuItem item)
+    {
+        if (item.DropDown is not BrowserOverflowMenu menu) return;
+        var screen = Screen.FromControl(_overflowButton).WorkingArea;
+        menu.ApplyTheme();
+        menu.ConstrainTo(new Size(Math.Min(OverflowMenuBounds(_overflowButton).Width, screen.Width), screen.Height - 16), DeviceDpi);
+    }
 
-        _overflowMenu.Show(new Point(x, y));
+    private static void ClearMenuItems(ToolStripItemCollection items)
+    {
+        while (items.Count > 0) { var item = items[0]; items.RemoveAt(0); item.Dispose(); }
+    }
+
+    private void PopulateHistoryMenu(BrowserMenuItem parent)
+    {
+        ClearMenuItems(parent.DropDownItems);
+        foreach (var entry in _navigationHistory.Find(""))
+        {
+            if (entry.Url is not { } url) continue;
+            var item = new BrowserMenuItem(entry.Text, "\uE81C") { ToolTipText = url };
+            item.Click += async (_, _) => await OpenTabAsync(url);
+            parent.DropDownItems.Add(item);
+        }
+        if (parent.DropDownItems.Count == 0)
+            parent.DropDownItems.Add(new BrowserMenuItem("Nenhuma página recente") { Enabled = false });
+        PrepareSubmenu(parent);
+    }
+
+    private void PopulateFavoritesMenu(BrowserMenuItem parent)
+    {
+        ClearMenuItems(parent.DropDownItems);
+        var add = new BrowserMenuItem("Adicionar esta página", "\uE734", "Ctrl+D")
+            { Enabled = BookmarkStore.IsWebUrl(_core?.Source ?? "") };
+        add.Click += (_, _) => AddBookmark();
+        var manage = new BrowserMenuItem("Gerenciar favoritos", "\uE8F1");
+        manage.Click += (_, _) => { OpenSettings(); _settingsTab?.ShowBookmarks(); };
+        parent.DropDownItems.AddRange(new ToolStripItem[] { add, manage, new ToolStripSeparator() });
+        try
+        {
+            var bookmarks = _bookmarks.Load();
+            foreach (var bookmark in bookmarks.Take(12))
+            {
+                var item = new BrowserMenuItem(bookmark.Title, "\uE734") { ToolTipText = bookmark.Url };
+                item.Click += async (_, _) => await OpenTabAsync(bookmark.Url, _tabs?.Active?.IsPrivate == true);
+                parent.DropDownItems.Add(item);
+            }
+            if (bookmarks.Count == 0)
+                parent.DropDownItems.Add(new BrowserMenuItem("Nenhum favorito salvo") { Enabled = false });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            parent.DropDownItems.Add(new BrowserMenuItem("Não foi possível carregar os favoritos") { Enabled = false });
+        }
+        PrepareSubmenu(parent);
+    }
+
+    private void PrintCurrentPage()
+    {
+        try { _core?.ShowPrintUI(); }
+        catch (Exception ex) when (ex is InvalidOperationException or NotImplementedException or System.Runtime.InteropServices.COMException)
+        { MessageBox.Show(this, "Não foi possível abrir a impressão.\n" + ex.Message, "Imprimir"); }
+    }
+
+    private async Task FindInCurrentPageAsync()
+    {
+        if (_core is not { } core || _browserEnvironment is null) return;
+        try
+        {
+            var options = _browserEnvironment.CreateFindOptions();
+            options.FindTerm = "";
+            options.SuppressDefaultFindDialog = false;
+            await core.Find.StartAsync(options);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotImplementedException or System.Runtime.InteropServices.COMException)
+        { if (!IsDisposed) MessageBox.Show(this, "Não foi possível abrir a busca na página.\n" + ex.Message, "Localizar"); }
     }
 
     private void DismissOverflowOnOutsideClick()
@@ -601,7 +746,7 @@ public sealed class BrowserForm : Form
     private void WithBookmarkErrors(Action action)
     {
         try { action(); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException or InvalidDataException)
         { MessageBox.Show(this, "Não foi possível acessar os favoritos. O arquivo existente foi preservado.\n" + ex.Message); }
     }
 
@@ -621,7 +766,37 @@ public sealed class BrowserForm : Form
         try { _bookmarksBar.SetBookmarks(_bookmarks.Load()); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
         { _bookmarksBar.SetBookmarks(Array.Empty<Bookmark>()); }
-        _bookmarksBar.Visible = !_windowFullscreen;
+        UpdateBookmarkItemsVisibility();
+    }
+
+    private void UpdateBookmarkItemsVisibility()
+    {
+        bool showBookmarkItems;
+        if (_tabView.SelectedTab is not BrowserTab)
+        {
+            showBookmarkItems = _tabView.SelectedTab is not null;
+        }
+        else
+        {
+            var url = _core?.Source ?? string.Empty;
+            showBookmarkItems = string.IsNullOrWhiteSpace(url)
+                || string.Equals(url, "about:blank", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(url, HomePage, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(url, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var showBookmarksBar = !_windowFullscreen && showBookmarkItems;
+        _bookmarksBar.SetBookmarkItemsVisible(showBookmarkItems);
+        _bookmarksBar.Visible = showBookmarksBar;
+        if (showBookmarksBar)
+            _bookmarksBar.SetTrailingControl(_overflowButton);
+        else
+        {
+            _bookmarksBar.SetTrailingControl(null);
+            if (!ReferenceEquals(_overflowButton.Parent, _toolbar))
+                _toolbar.Controls.Add(_overflowButton);
+        }
+        LayoutToolbar();
     }
 
     private void OpenSettings()
@@ -672,7 +847,7 @@ public sealed class BrowserForm : Form
         BackColor = Theme.Chrome; _toolbar.BackColor = Theme.Chrome; _tabBar.BackColor = Theme.Chrome;
         _overflowButton.BackColor = Theme.Chrome; _overflowButton.ForeColor = Theme.Ink;
         _minimizeButton.Invalidate(); _maximizeButton.Invalidate(); _closeButton.Invalidate();
-        _overflowMenu.BackColor = Theme.Surface; _overflowMenu.ForeColor = Theme.Ink;
+        _overflowMenu.ApplyTheme();
         ApplyThemeRecursive(this);
         _tabView.ApplyTheme();
         _bookmarksBar.ApplyTheme();
@@ -734,35 +909,6 @@ public sealed class BrowserForm : Form
 
     }
 
-    private sealed class OverflowMenuRenderer : ToolStripProfessionalRenderer
-    {
-        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
-        {
-            using var brush = new SolidBrush(Theme.Surface);
-            e.Graphics.FillRectangle(brush, e.AffectedBounds);
-        }
-
-        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
-        {
-            using var pen = new Pen(Theme.Divider);
-            var bounds = new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-            e.Graphics.DrawRectangle(pen, bounds);
-        }
-
-        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
-        {
-            var bounds = new Rectangle(Point.Empty, e.Item.Size);
-            using var brush = new SolidBrush(e.Item.Selected ? Theme.SurfaceHot : Theme.Surface);
-            e.Graphics.FillRectangle(brush, bounds);
-        }
-
-        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
-        {
-            e.TextColor = Theme.Ink;
-            base.OnRenderItemText(e);
-        }
-    }
-
     private async void ClearSavedPasswords()
     {
         if (!_access.IsAdvancedMode) return;
@@ -782,7 +928,7 @@ public sealed class BrowserForm : Form
             _omniboxDirty = false;
             FocusOmniboxForNewTab();
             var tab = await creation;
-            if (tab is not null && tab.PendingNavigation is null && _tabs?.Active == tab && !_omniboxDirty)
+            if (tab is not null && !tab.Navigation.HasUserNavigation && _tabs?.Active == tab && !_omniboxDirty)
                 FocusOmniboxForNewTab();
         }
         catch (Exception ex)
@@ -835,44 +981,39 @@ public sealed class BrowserForm : Form
         }
     }
 
-    private async Task<bool> OpenTabFromBridgeAsync(string url, bool isPrivate)
-    {
-        if (_tabs is null || IsDisposed) return false;
-        try { return await _tabs.CreateAsync(url, isPrivate) is not null; }
-        catch { return false; }
-    }
-
     private void OnPermissionPromptCreated(PermissionPrompt prompt)
     {
-        if (!IsHandleCreated || IsDisposed) return;
-        BeginInvoke(new Action(() => _ = ShowPermissionPromptAsync(prompt)));
+        if (!IsHandleCreated || IsDisposed)
+        {
+            _permissionPolicy.Resolve(prompt.Id, false);
+            return;
+        }
+
+        try { BeginInvoke(new Action(() => ShowPermissionPrompt(prompt))); }
+        catch (InvalidOperationException) { _permissionPolicy.Resolve(prompt.Id, false); }
     }
 
-    private async Task ShowPermissionPromptAsync(PermissionPrompt prompt)
+    private void ShowPermissionPrompt(PermissionPrompt prompt)
     {
-        foreach (var tab in _tabView.TabPages.OfType<BrowserTab>())
+        if (IsDisposed || Disposing)
         {
-            if (TrustedBrowserBridge.PublishPermissionPrompt(tab.Web.CoreWebView2, prompt)) return;
+            _permissionPolicy.Resolve(prompt.Id, false);
+            return;
         }
 
-        if (_permissionCenterOpening) return;
-        _permissionCenterOpening = true;
-        try { await OpenTabAsync(TrustedBrowserBridge.UiUrl); }
-        finally { _permissionCenterOpening = false; }
-    }
-
-    private bool SaveBookmarkFromBridge(string url, string title)
-    {
-        try
+        var permission = prompt.Kind switch
         {
-            _bookmarks.Add(url, title);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException)
-        {
-            MessageBox.Show(this, "Não foi possível salvar o favorito.", "Favoritos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return false;
-        }
+            "Camera" => "câmera",
+            "Microphone" => "microfone",
+            "Geolocation" => "localização",
+            "Notifications" => "notificações",
+            _ => prompt.Kind
+        };
+        var allow = MessageBox.Show(this,
+            $"{prompt.Origin} solicita acesso a {permission}.\n\nDeseja permitir somente desta vez?",
+            "Permissão do site", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+        _permissionPolicy.Resolve(prompt.Id, allow);
     }
 
     private void OnBrandClicked()
@@ -895,8 +1036,24 @@ public sealed class BrowserForm : Form
 
     private void CloseTab()
     {
-        _tabs?.CloseActive();
-        if (_tabView.BrowserTabCount == 0) Close();
+        if (_tabView.SelectedTab is BrowserTab tab) _tabs?.Close(tab);
+        else if (_tabView.SelectedTab is { } auxiliary) CloseAuxiliaryTab(auxiliary);
+        if (_tabView.TabCount == 0) Close();
+    }
+
+    private void CloseAuxiliaryTab(TabPage tab)
+    {
+        if (!_tabView.TabPages.Contains(tab)) return;
+        var index = _tabView.TabPages.IndexOf(tab);
+        var wasActive = _tabView.SelectedTab == tab;
+        if (tab == _settingsTab) _settingsTab = null;
+        if (tab == _profileTab) _profileTab = null;
+        if (tab == _downloadsTab) _downloadsTab = null;
+        _tabView.TabPages.Remove(tab);
+        if (wasActive && _tabView.TabCount > 0)
+            _tabView.SelectedIndex = Math.Min(index, _tabView.TabCount - 1);
+        tab.Dispose();
+        if (_tabView.TabCount == 0) Close();
     }
 
     private void RefreshActiveTab(bool resetEditing = true)
@@ -905,8 +1062,10 @@ public sealed class BrowserForm : Form
         SetLoading(_tabs?.Active?.Loading == true);
         _back.Enabled = _core?.CanGoBack == true;
         _forward.Enabled = _core?.CanGoForward == true;
+        _inspect.Enabled = _core is not null;
         var url = _core?.Source ?? "";
         ShowUrl(url);
+        UpdateBookmarkItemsVisibility();
         _omnibox.SetFavorite(IsFavorite(url));
         Text = BuildTitle(_core?.DocumentTitle ?? "", _tabs?.Active?.IsPrivate == true);
         _telemetry.RecordActiveTab(url, _core?.DocumentTitle);
@@ -1081,7 +1240,7 @@ public sealed class BrowserForm : Form
             start.ArgumentList.Add(update.Sha256);
             if (Process.Start(start) is null)
                 throw new IOException("Não foi possível iniciar o instalador da atualização.");
-            Close();
+            Application.Exit();
         }
         catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
         catch (Exception ex)
@@ -1113,9 +1272,11 @@ public sealed class BrowserForm : Form
         try
         {
             await InitializeWebViewAsync();
+            _initialTabReady.TrySetResult(!IsDisposed && _tabView.TabCount > 0);
         }
         catch (Exception ex)
         {
+            _initialTabReady.TrySetResult(false);
             MessageBox.Show(
                 "Nao foi possivel iniciar o motor WebView2.\n\n" + ex.Message +
                 "\n\nInstale o 'Microsoft Edge WebView2 Runtime' (Evergreen) e tente de novo.",
@@ -1126,12 +1287,14 @@ public sealed class BrowserForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _initialTabReady.TrySetResult(false);
         _updateLifetime.Cancel();
         _updatePoll.Dispose();
         _updates.Dispose();
         _updateLifetime.Dispose();
         Application.RemoveMessageFilter(_overflowDismissFilter);
         _overflowOutsideClickTimer.Dispose();
+        _overflowMenu.Dispose();
         _zoomTip.Dispose();
         HideSuggestions();
         _suggestionDebounce.Dispose();
@@ -1144,20 +1307,26 @@ public sealed class BrowserForm : Form
         base.OnFormClosed(e);
     }
 
+    private static Task<CoreWebView2Environment> GetSharedBrowserEnvironmentAsync()
+    {
+        lock (BrowserEnvironmentLock)
+            return _sharedBrowserEnvironmentTask ??= CreateSharedBrowserEnvironmentAsync();
+    }
+
+    private static async Task<CoreWebView2Environment> CreateSharedBrowserEnvironmentAsync()
+    {
+        Directory.CreateDirectory(BrowserUserDataDirectory);
+        var options = WebContentIsolation.CreateEnvironmentOptions(BrowserArguments());
+        return await CoreWebView2Environment.CreateAsync(
+            browserExecutableFolder: null,
+            userDataFolder: BrowserUserDataDirectory,
+            options: options);
+    }
+
     private async Task InitializeWebViewAsync()
     {
-        var userData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "LeanBrowser", "WebView2");
-
-        Directory.CreateDirectory(userData);
-
-        var options = WebContentIsolation.CreateEnvironmentOptions(BrowserArguments());
-
-        var env = await CoreWebView2Environment.CreateAsync(
-            browserExecutableFolder: null,        // usa o runtime Evergreen do sistema
-            userDataFolder: userData,
-            options: options);
+        var userData = BrowserUserDataDirectory;
+        var env = await GetSharedBrowserEnvironmentAsync();
 
         if (IsDisposed) return;
         _browserEnvironment = env;
@@ -1172,11 +1341,7 @@ public sealed class BrowserForm : Form
             tab.PermissionSubscription = _permissionPolicy.Attach(tab.Web);
             if (!tab.IsPrivate)
                 await _permissionPolicy.ResetPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
-            TrustedBrowserBridge.Attach(tab.Web, new TrustedBrowserBridgeHandlers(
-                url => OpenTabFromBridgeAsync(url, tab.IsPrivate),
-                SaveBookmarkFromBridge,
-                _permissionPolicy.GetPending,
-                _permissionPolicy.Resolve));
+            TrustedBrowserBridge.Attach(tab.Web);
             await _adProtection.InitializeAsync(tab.Web.CoreWebView2, userData);
             if (tab.IsDisposed || IsDisposed) return;
             await tab.DocumentProtection.SetEnabledAsync(tab.Web.CoreWebView2, _adProtection.Enabled);
@@ -1189,8 +1354,26 @@ public sealed class BrowserForm : Form
                 MessageBox.Show(this, failure, "Proteção de anúncios", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         };
-        await _tabs.CreateAsync(HomePage, focusOmniboxOnFirstLoad: true);
-        FocusOmniboxForNewTab();
+        var focusOmnibox = string.Equals(_initialUrl, HomePage, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_initialUrl, TrustedBrowserBridge.PrivateTabUrl, StringComparison.OrdinalIgnoreCase);
+        await _tabs.CreateAsync(_initialUrl, isPrivate: _initialIsPrivate,
+            focusOmniboxOnFirstLoad: focusOmnibox);
+        if (focusOmnibox) FocusOmniboxForNewTab();
+    }
+
+    private async void OnTabDraggedOutside(BrowserTab tab)
+    {
+        var url = tab.Web.CoreWebView2?.Source;
+        var openDetachedWindow = DetachedTabWindowRequested;
+        if (openDetachedWindow is null || !BookmarkStore.IsWebUrl(url ?? string.Empty)) return;
+
+        bool destinationReady;
+        try { destinationReady = await openDetachedWindow(url!, tab.IsPrivate); }
+        catch { destinationReady = false; }
+
+        if (!destinationReady || IsDisposed || tab.IsDisposed || !_tabView.TabPages.Contains(tab)) return;
+        _tabs?.Close(tab);
+        if (_tabView.TabCount == 0) Close();
     }
 
     private Task<bool> ConfirmInsecureNavigationAsync(Uri target)
@@ -1219,22 +1402,75 @@ public sealed class BrowserForm : Form
         MessageBox.Show(
             this,
             $"{target.GetLeftPart(UriPartial.Authority)} usa HTTP sem criptografia. " +
-            "Dados e credenciais podem ser interceptados ou alterados.\n\n" +
+            "Dados e credenciais podem ser interceptados ou alterados. Se continuar, " +
+            "o acesso HTTP a este host será permitido em qualquer porta nesta guia.\n\n" +
             "Deseja aceitar o risco e continuar somente nesta sessao?",
             "Conexao nao segura",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2) == DialogResult.Yes;
 
+    private Uri? CurrentHttpUri()
+    {
+        if (_tabs?.Active is not { IsPrivate: false } tab ||
+            !Uri.TryCreate(tab.Web.CoreWebView2?.Source, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(uri.UserInfo))
+            return null;
+
+        return uri;
+    }
+
+    private void TogglePersistentHttpPermission()
+    {
+        var uri = CurrentHttpUri();
+        if (uri is null) return;
+
+        var permanentlyAllowed = _siteAllowlist.IsAllowed(uri);
+        if (!permanentlyAllowed)
+        {
+            var origin = uri.GetLeftPart(UriPartial.Authority);
+            var decision = MessageBox.Show(
+                this,
+                $"Permitir permanentemente {origin} por HTTP?\n\n" +
+                "A autorização vale para toda essa origem, em qualquer página. " +
+                "HTTP não criptografa senhas nem outros dados enviados. Você pode remover a permissão neste mesmo menu.",
+                "Permissão permanente de HTTP",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (decision != DialogResult.Yes) return;
+        }
+
+        try
+        {
+            _siteAllowlist.SetAllowed(uri, !permanentlyAllowed);
+            _overflowMenu.Close();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or InvalidDataException or ArgumentException or JsonException or System.Security.SecurityException)
+        {
+            MessageBox.Show(this,
+                "Não foi possível salvar a permissão permanente para este site.\n\n" + ex.Message,
+                "Permissão do site",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
     private void ConfigureTab(BrowserTab tab)
     {
         var core = tab.Web.CoreWebView2;
+        tab.Disposed += (_, _) =>
+        {
+            _newTabContextItems.Remove(core);
+            _inspectContextItems.Remove(core);
+            _contextMenuLinks.Remove(core);
+        };
         var faviconRequest = 0;
         ApplySettings(core);
-        PasswordManager.Configure(core);
         if (tab.IsPrivate)
         {
-            core.Settings.IsPasswordAutosaveEnabled = false;
             core.DownloadStarting += (_, args) => OnPrivateDownloadStarting(args);
         }
         else
@@ -1274,7 +1510,7 @@ public sealed class BrowserForm : Form
                     _tabView.SetFavicon(tab, null);
             }
         };
-        core.NavigationCompleted += (_, e) =>
+        core.NavigationCompleted += async (_, e) =>
         {
             tab.Loading = false;
             if (e.IsSuccess)
@@ -1294,18 +1530,43 @@ public sealed class BrowserForm : Form
                             FocusOmniboxForNewTab();
                     }));
             }
+            if (e.IsSuccess && string.Equals(core.Source, TrustedBrowserBridge.NewTabUrl,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var accountName = Environment.UserName.Trim().Replace('.', ' ').Replace('_', ' ');
+                    var userName = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(
+                        accountName.ToLower(CultureInfo.CurrentCulture));
+                    if (!string.IsNullOrWhiteSpace(userName))
+                    {
+                        var serializedUserName = JsonSerializer.Serialize(userName);
+                        await core.ExecuteScriptAsync(
+                            $"window.dispatchEvent(new CustomEvent('cottonbrowser-user-name', {{ detail: {serializedUserName} }}));");
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException
+                    or System.Runtime.InteropServices.COMException)
+                {
+                    // The document may change while the greeting name is sent.
+                }
+            }
         };
         core.SourceChanged += (_, _) =>
         {
             tab.Popups.OnNavigation(core.Source);
-            if (_tabs?.Active == tab) ShowUrl(core.Source);
+            if (_tabs?.Active == tab)
+            {
+                ShowUrl(core.Source);
+                UpdateBookmarkItemsVisibility();
+            }
         };
         core.HistoryChanged += (_, _) => { if (_tabs?.Active == tab) UpdateHistoryButtons(); };
         core.DocumentTitleChanged += (_, _) =>
         {
             var title = core.DocumentTitle;
-            var shortTitle = string.IsNullOrWhiteSpace(title) ? "Nova aba" : title[..Math.Min(32, title.Length)];
-            tab.Text = tab.IsPrivate ? "Anônima · " + shortTitle : shortTitle;
+            var displayTitle = string.IsNullOrWhiteSpace(title) ? "Nova aba" : title;
+            tab.Text = tab.IsPrivate ? "Anônima · " + displayTitle : displayTitle;
             if (_tabs?.Active == tab) Text = BuildTitle(title, tab.IsPrivate);
         };
         core.ContainsFullScreenElementChanged += (_, _) =>
@@ -1323,7 +1584,11 @@ public sealed class BrowserForm : Form
         {
             if (_tabs?.Active == tab && !IsDisposed) ShowZoom(tab.Web.ZoomFactor);
         };
-        core.ContextMenuRequested += (_, e) => ReplaceOpenInNewWindowCommand(tab, e);
+        core.ContextMenuRequested += (_, e) =>
+        {
+            ReplaceOpenInNewWindowCommand(tab, e);
+            EnsureInspectContextMenuItem(tab, e);
+        };
         core.NewWindowRequested += (_, e) =>
         {
             e.Handled = true;
@@ -1336,12 +1601,10 @@ public sealed class BrowserForm : Form
         };
         core.WindowCloseRequested += (_, _) =>
         {
-            _newTabContextItems.Remove(core);
-            _contextMenuLinks.Remove(core);
             _tabs?.Close(tab);
-            if (_tabView.BrowserTabCount == 0) Close();
+            if (_tabView.TabCount == 0) Close();
         };
-        RefreshActiveTab();
+        RefreshActiveTab(resetEditing: false);
     }
 
     private void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs args)
@@ -1367,7 +1630,7 @@ public sealed class BrowserForm : Form
 
             _activeDownloads[operation] = entry;
             _downloadHistory.Upsert(entry);
-            _lastPersistedDownloadPercent[entry.Id] = -1;
+            _lastPersistedDownloadTick[entry.Id] = Environment.TickCount64;
             operation.BytesReceivedChanged += (_, _) => UpdateDownload(operation);
             operation.StateChanged += (_, _) => UpdateDownload(operation);
             BeginInvoke(new Action(OpenDownloads));
@@ -1427,15 +1690,14 @@ public sealed class BrowserForm : Form
         };
         _activeDownloads[operation] = updated;
 
-        var percent = GetDownloadPercent(updated);
-        var shouldPersist = status != DownloadStatus.InProgress
-            || !_lastPersistedDownloadPercent.TryGetValue(updated.Id, out var lastPercent)
-            || percent != lastPercent;
-        if (shouldPersist)
-        {
-            _lastPersistedDownloadPercent[updated.Id] = percent;
-            _downloadHistory.Upsert(updated);
-        }
+        var now = Environment.TickCount64;
+        var shouldPersist = status != current.Status
+            || !_lastPersistedDownloadTick.TryGetValue(updated.Id, out var lastTick)
+            || now - lastTick >= 1000;
+        // A interface recebe todos os bytes, mesmo sem tamanho total conhecido;
+        // o arquivo de histórico é atualizado no máximo uma vez por segundo.
+        _downloadHistory.Upsert(updated, persist: shouldPersist);
+        if (shouldPersist) _lastPersistedDownloadTick[updated.Id] = now;
         ScheduleDownloadRefresh();
     }
 
@@ -1452,13 +1714,6 @@ public sealed class BrowserForm : Form
             }));
         }
         catch (InvalidOperationException) { Interlocked.Exchange(ref _downloadRefreshPending, 0); }
-    }
-
-    private static int GetDownloadPercent(DownloadEntry entry)
-    {
-        if (entry.Status == DownloadStatus.Completed) return 100;
-        if (entry.TotalBytes <= 0) return -1;
-        return (int)Math.Clamp(entry.BytesReceived * 100L / entry.TotalBytes, 0, 100);
     }
 
     private static long DownloadTotalBytes(ulong? total)
@@ -1522,6 +1777,42 @@ public sealed class BrowserForm : Form
         ReplaceContextMenuItem(e.MenuItems, newTabItem);
     }
 
+    private void EnsureInspectContextMenuItem(BrowserTab tab, CoreWebView2ContextMenuRequestedEventArgs e)
+    {
+        // O WebView2 pode omitir a entrada nativa em alguns tipos de página.
+        if (ContainsInspectContextMenuItem(e.MenuItems)) return;
+
+        var core = tab.Web.CoreWebView2;
+        if (!_inspectContextItems.TryGetValue(core, out var inspectItem))
+        {
+            inspectItem = core.Environment.CreateContextMenuItem(
+                "Inspecionar página", null, CoreWebView2ContextMenuItemKind.Command);
+            inspectItem.CustomItemSelected += (_, _) =>
+            {
+                if (tab.IsDisposed || IsDisposed) return;
+                BeginInvoke(new Action(() =>
+                {
+                    if (!tab.IsDisposed && !IsDisposed) OpenInspector(core);
+                }));
+            };
+            _inspectContextItems[core] = inspectItem;
+        }
+
+        e.MenuItems.Add(inspectItem);
+    }
+
+    private static bool ContainsInspectContextMenuItem(IList<CoreWebView2ContextMenuItem> items)
+    {
+        foreach (var item in items)
+        {
+            if (item.Name.StartsWith("inspect", StringComparison.OrdinalIgnoreCase) ||
+                item.Children is { Count: > 0 } children && ContainsInspectContextMenuItem(children))
+                return true;
+        }
+
+        return false;
+    }
+
     private static bool ReplaceContextMenuItem(
         IList<CoreWebView2ContextMenuItem> items,
         CoreWebView2ContextMenuItem replacement)
@@ -1571,7 +1862,6 @@ public sealed class BrowserForm : Form
             "OptimizationHints",           // baixa modelos de hints periodicamente
             "MediaRouter",                 // descoberta de Cast na rede local
             "Translate",
-            "AutofillServerCommunication",
             "InterestFeedContentSuggestions",
             "CalculateNativeWinOcclusion", // ver nota abaixo
         }),
@@ -1592,10 +1882,9 @@ public sealed class BrowserForm : Form
             ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
         var s = core.Settings;
 
-        s.AreDevToolsEnabled          = false; // sem frontend de devtools carregado
+        s.AreDevToolsEnabled          = true;
         s.IsStatusBarEnabled          = false; // remove um popup/HWND
-        s.IsGeneralAutofillEnabled    = false;
-        // PasswordManager.Configure aplica a política de senhas do perfil.
+        // BrowserTabManager já aplicou o preenchimento automático ao perfil.
         s.IsSwipeNavigationEnabled    = false;
         s.IsPinchZoomEnabled          = false;
         s.AreDefaultContextMenusEnabled = true;
@@ -1610,10 +1899,10 @@ public sealed class BrowserForm : Form
 
         try
         {
-            // Bloqueio de rastreadores nativo do motor, gratuito em CPU:
-            // roda dentro do processo do browser, junto com a nossa blocklist.
+            // O nivel equilibrado e o padrao do WebView2. O nivel estrito pode
+            // bloquear armazenamento usado por fluxos de login e quebrar sites.
             core.Profile.PreferredTrackingPreventionLevel =
-                CoreWebView2TrackingPreventionLevel.Strict;
+                CoreWebView2TrackingPreventionLevel.Balanced;
         }
         catch
         {
@@ -1711,10 +2000,20 @@ public sealed class BrowserForm : Form
 
     private void NavigateSuggestion(SuggestionItem item)
     {
+        NavigateCurrent(item.Url ?? UrlHelper.Normalize(item.Text));
+    }
+
+    private void NavigateCurrent(string target)
+    {
         HideSuggestions();
         _omniboxDirty = false;
-        _core?.Navigate(item.Url ?? UrlHelper.Normalize(item.Text));
-        _web?.Focus();
+        if (_tabs?.Active is { } tab)
+        {
+            tab.NavigateOrQueue(target);
+            tab.Web.Focus();
+        }
+        else
+            _ = OpenTabAsync(target);
     }
 
     private void DismissSuggestion(SuggestionItem item)
@@ -1735,6 +2034,7 @@ public sealed class BrowserForm : Form
 
     private void ShowZoom(double factor)
     {
+        _menuZoom.SetState(factor, _tabs?.Active?.Navigation.IsReady == true, _windowFullscreen);
         _omnibox.Zoom.ShowPercentage(factor);
         _zoomShownAt = Environment.TickCount64;
         _zoomFade.Stop();
@@ -1789,21 +2089,9 @@ public sealed class BrowserForm : Form
         e.Handled = true;
 
         var selected = _suggestionPanel.SelectedItem;
-        var enteredQuery = _tabs?.Active?.IsPrivate == true ? _omnibox.Input.Text : _typedQuery;
-        var target = selected?.Url ?? UrlHelper.Normalize(selected?.Text ?? enteredQuery);
-
-        HideSuggestions();
-        _omniboxDirty = false;
-        if (_core is { } core)
-        {
-            core.Navigate(target);
-            _web?.Focus();
-        }
-        else if (_tabs?.Active is { } tab)
-        {
-            tab.PendingNavigation = target;
-            tab.FocusOmniboxOnFirstLoad = false;
-        }
+        var target = OmniboxNavigation.ResolveTarget(_omnibox.Input.Text, _core?.Source,
+            _omniboxDirty, selected?.Text, selected?.Url);
+        if (target is not null) NavigateCurrent(target);
     }
 
     private void SetLoading(bool loading)
@@ -1853,6 +2141,22 @@ public sealed class BrowserForm : Form
 
     // --------------------------------------------------------- Atalhos -----
 
+    private void OpenInspector()
+    {
+        if (_core is { } core) OpenInspector(core);
+    }
+
+    private void OpenInspector(CoreWebView2 core)
+    {
+        try { core.OpenDevToolsWindow(); }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        {
+            MessageBox.Show(this, "Não foi possível abrir o inspetor desta guia.\n\n" + ex.Message,
+                "Inspecionar página", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
     private void OnWebKeyDown(object? sender, KeyEventArgs e)
     {
         var key = e.KeyCode;
@@ -1861,10 +2165,11 @@ public sealed class BrowserForm : Form
         var alt = e.Alt;
         var isShortcut = (ctrl && (key == Keys.L || key == Keys.R || key == Keys.T || key == Keys.W || key == Keys.Tab || key == Keys.D
             || (key == Keys.J && !shift && !alt) || key is Keys.Oemplus or Keys.Add or Keys.OemMinus or Keys.Subtract or Keys.D0 or Keys.NumPad0))
-            || (ctrl && shift && (key == Keys.A || key == Keys.N))
+            || (ctrl && !shift && !alt && key == Keys.N)
+            || (ctrl && shift && (key == Keys.A || key == Keys.N || key == Keys.I))
             || (ctrl && shift && alt && _access.IsAdvancedMode && key == Keys.M)
             || (alt && (key == Keys.D || key == Keys.Left || key == Keys.Right || key == Keys.Home))
-            || key is Keys.F5 or Keys.F11
+            || key is Keys.F5 or Keys.F11 or Keys.F12
             || (key == Keys.Escape && !ActivePageIsFullscreen() && (_browserFullscreen || _loading));
 
         if (!isShortcut) return;
@@ -1890,8 +2195,15 @@ public sealed class BrowserForm : Form
     {
         switch (key)
         {
+            case Keys.F12 when !ctrl && !shift && !alt:
+            case Keys.I when ctrl && shift && !alt:
+                OpenInspector();
+                return true;
             case Keys.M when ctrl && shift && alt && _access.IsAdvancedMode:
                 _ = OpenAdminDashboardAsync();
+                return true;
+            case Keys.N when ctrl && !shift && !alt:
+                NewWindowRequested?.Invoke();
                 return true;
             case Keys.N when ctrl && shift:
                 _ = OpenNewTabAsync(isPrivate: true);
@@ -1945,6 +2257,7 @@ public sealed class BrowserForm : Form
                 return true;
 
             case Keys.Escape:
+                if (_omnibox.Input.Focused && _suggestionPanel.Visible) return false;
                 if (ActivePageIsFullscreen()) return false;
                 if (_browserFullscreen)
                 {
@@ -1956,7 +2269,7 @@ public sealed class BrowserForm : Form
                 return false;
 
             case Keys.Home when alt:
-                _core?.Navigate(HomePage);
+                NavigateCurrent(_tabs?.Active?.IsPrivate == true ? TrustedBrowserBridge.PrivateTabUrl : HomePage);
                 return true;
 
             // Liga/desliga o bloqueador sem poluir a barra com mais um botao.
@@ -2052,4 +2365,3 @@ public sealed class BrowserForm : Form
         }
     }
 }
-

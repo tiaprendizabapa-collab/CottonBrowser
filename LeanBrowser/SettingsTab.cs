@@ -63,6 +63,12 @@ public sealed class SettingsTab : TabPage
         foreach (var bookmark in _loadBookmarks()) _favorites.Items.Add(new BookmarkItem(bookmark.Title, bookmark.Url));
     }
 
+    public void ShowBookmarks()
+    {
+        _main.ScrollControlIntoView(_favoritesCard);
+        _favorites.Focus();
+    }
+
     public void ApplyTheme()
     {
         BackColor = Theme.Chrome; _sidebar.BackColor = Theme.Surface; _main.BackColor = Theme.Chrome; _search.BackColor = Theme.Surface;

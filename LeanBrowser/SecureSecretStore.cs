@@ -58,7 +58,7 @@ public sealed class DpapiSecretStore : ISecretStore
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes<char>(secretCharacters));
+            CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(secretCharacters.AsSpan()));
             if (plaintext is not null) CryptographicOperations.ZeroMemory(plaintext);
             CryptographicOperations.ZeroMemory(entropy);
             if (ciphertext is not null) CryptographicOperations.ZeroMemory(ciphertext);
@@ -81,7 +81,7 @@ public sealed class DpapiSecretStore : ISecretStore
             var characters = Utf8.GetChars(plaintext);
             if (characters.Length == 0 || ((ReadOnlySpan<char>)characters).IsWhiteSpace())
             {
-                CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes<char>(characters));
+                CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(characters.AsSpan()));
                 return false;
             }
 
@@ -169,6 +169,6 @@ public sealed class SecretLease : IDisposable
     {
         var characters = Interlocked.Exchange(ref _characters, null);
         if (characters is not null)
-            CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes<char>(characters));
+            CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(characters.AsSpan()));
     }
 }

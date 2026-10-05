@@ -1,4 +1,6 @@
 using Microsoft.Web.WebView2.Core;
+using System.Drawing;
+using System.Linq;
 using System.Threading;
 
 namespace LeanBrowser;
@@ -21,7 +23,7 @@ internal static class Program
         if (!ownsInstance)
         {
             MessageBox.Show(
-                "O CottonBrowser ja esta aberto. Feche a instancia atual antes de iniciar outra.",
+                "O CottonBrowser ja esta aberto. Para abrir outra janela, use Ctrl+N ou Nova janela no menu de tres pontos.",
                 "CottonBrowser",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -50,11 +52,52 @@ internal static class Program
 
         try
         {
-            Application.Run(new BrowserForm());
+            Application.Run(new BrowserApplicationContext());
         }
         finally
         {
             instanceMutex.ReleaseMutex();
+        }
+    }
+
+    private sealed class BrowserApplicationContext : ApplicationContext
+    {
+        private readonly HashSet<BrowserForm> _windows = new();
+        public BrowserApplicationContext() => OpenNewWindow();
+        private void OpenNewWindow() => CreateBrowserWindow();
+
+        private BrowserForm CreateBrowserWindow(string? initialUrl = null, bool isPrivate = false)
+        {
+            var previous = _windows.LastOrDefault();
+            var form = new BrowserForm(initialUrl, isPrivate);
+            if (previous is not null)
+            {
+                var workArea = Screen.FromControl(previous).WorkingArea;
+                var offset = ((_windows.Count - 1) % 5 + 1) * 28;
+                form.StartPosition = FormStartPosition.Manual;
+                form.Location = new Point(
+                    Math.Clamp(previous.Left + offset, workArea.Left, Math.Max(workArea.Left, workArea.Right - form.Width)),
+                    Math.Clamp(previous.Top + offset, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - form.Height)));
+            }
+            form.NewWindowRequested += OpenNewWindow;
+            form.DetachedTabWindowRequested += OpenDetachedTabWindowAsync;
+            form.FormClosed += OnBrowserWindowClosed;
+            _windows.Add(form);
+            form.Show();
+            return form;
+        }
+
+        private async Task<bool> OpenDetachedTabWindowAsync(string url, bool isPrivate)
+        {
+            var form = CreateBrowserWindow(url, isPrivate);
+            return await form.InitialTabReady;
+        }
+        private void OnBrowserWindowClosed(object? sender, FormClosedEventArgs e)
+        {
+            if (sender is not BrowserForm form || !_windows.Remove(form)) return;
+            form.NewWindowRequested -= OpenNewWindow;
+            form.DetachedTabWindowRequested -= OpenDetachedTabWindowAsync;
+            if (_windows.Count == 0) ExitThread();
         }
     }
 
