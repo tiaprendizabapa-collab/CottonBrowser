@@ -192,7 +192,7 @@ jobs:
             $arguments += '--generate-notes'
           }
           else {
-            $arguments += @('--notes', "Atualização automática da branch main (versão $env:COTTON_RELEASE_VERSION).")
+            $arguments += @('--notes-file', 'RELEASE_NOTES.md')
           }
 
           & gh @arguments
