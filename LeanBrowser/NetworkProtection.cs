@@ -138,9 +138,12 @@ public sealed class WebRiskReputationService : IUrlReputationService, IDisposabl
 }
 
 /// <summary>
-/// Intercepts every HTTP resource before it is sent and upgrades it to HTTPS.
-/// Document requests are then held with a WebView2 deferral until the URL is
-/// checked by the reputation provider.  A known malicious URL is blocked;
+/// Intercepts HTTP resources before they are sent and upgrades them to HTTPS.
+/// API requests keep their requested scheme so HTTP applications can reach
+/// API servers that do not offer TLS on their service port; WebView2's native
+/// mixed-content policy still governs those requests from HTTPS documents.
+/// Document requests are held with a WebView2 deferral until the URL is
+/// checked by the reputation provider. A known malicious URL is blocked;
 /// unavailable reputation data does not make the browser unusable.
 /// </summary>
 public sealed class NetworkProtection : IDisposable
@@ -150,11 +153,16 @@ public sealed class NetworkProtection : IDisposable
         <body><h1>Site bloqueado</h1><p>O navegador bloqueou esta navegação por política de segurança.</p></body></html>
         """u8.ToArray();
 
+    private readonly WebView2 _control;
     private readonly CoreWebView2 _core;
     private readonly IUrlReputationService _reputation;
     private readonly SiteAllowlist _siteAllowlist;
     private readonly Func<Uri, Task<bool>> _confirmInsecureNavigation;
-    private readonly ConcurrentDictionary<string, byte> _approvedInsecureOrigins = new(StringComparer.OrdinalIgnoreCase);
+    // A user who accepts an HTTP site must also be able to submit its login
+    // form to a backend on another port of the same host (common for intranet
+    // applications). Keep this approval limited to the current tab and host; the
+    // persistent allowlist remains exact to scheme, host, and port.
+    private readonly ConcurrentDictionary<string, byte> _approvedInsecureHosts = new(StringComparer.OrdinalIgnoreCase);
     private long _navigationEpoch;
     private int _disposed;
 
@@ -165,6 +173,7 @@ public sealed class NetworkProtection : IDisposable
         SiteAllowlist siteAllowlist)
     {
         ArgumentNullException.ThrowIfNull(control);
+        _control = control;
         _reputation = reputation ?? throw new ArgumentNullException(nameof(reputation));
         _siteAllowlist = siteAllowlist ?? throw new ArgumentNullException(nameof(siteAllowlist));
         _confirmInsecureNavigation = confirmInsecureNavigation ?? throw new ArgumentNullException(nameof(confirmInsecureNavigation));
@@ -189,13 +198,35 @@ public sealed class NetworkProtection : IDisposable
             || !TryGetInsecureOrigin(args.Uri, out var target)
             || AdminDashboardEndpoint.IsLocalOrigin(target)
             || _siteAllowlist.IsAllowed(target)
-            || IsInsecureOriginApproved(target))
+            || IsInsecureHostApproved(target))
             return;
 
         // The request has not reached the network yet. Cancel it, obtain an
         // explicit decision, then navigate again only if it is still current.
         args.Cancel = true;
-        _ = ResolveInsecureNavigationAsync(args.Uri, target, epoch);
+        QueueInsecureNavigation(args.Uri, target, epoch);
+    }
+
+    private void QueueInsecureNavigation(string requestUri, Uri target, long epoch)
+    {
+        if (_control.IsDisposed || !_control.IsHandleCreated) return;
+        try
+        {
+            // Return from NavigationStarting before showing a modal dialog or
+            // starting another navigation. WebView2 still owns the canceled
+            // navigation until the event callback returns.
+            _control.BeginInvoke((Action)(() =>
+            {
+                if (Volatile.Read(ref _disposed) == 0 &&
+                    epoch == Volatile.Read(ref _navigationEpoch) && !_control.IsDisposed)
+                    _ = ResolveInsecureNavigationAsync(requestUri, target, epoch);
+            }));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        {
+            // The tab may close before the confirmation can be shown.
+        }
     }
 
     private async Task ResolveInsecureNavigationAsync(string requestUri, Uri target, long epoch)
@@ -215,15 +246,44 @@ public sealed class NetworkProtection : IDisposable
 
         if (accepted)
         {
-            _approvedInsecureOrigins.TryAdd(InsecureOriginKey(target), 0);
-            _core.Navigate(requestUri);
+            _approvedInsecureHosts.TryAdd(InsecureHostKey(target), 0);
+            NavigateOnUiThread(requestUri, epoch);
             return;
         }
 
         // Declining preserves the secure-by-default behavior: attempt HTTPS
         // rather than sending the original clear-text request.
         if (TryUpgradeToHttps(target, out var upgraded))
-            _core.Navigate(upgraded.AbsoluteUri);
+            NavigateOnUiThread(upgraded.AbsoluteUri, epoch);
+    }
+
+    private void NavigateOnUiThread(string uri, long expectedEpoch)
+    {
+        void NavigateIfCurrent()
+        {
+            if (Volatile.Read(ref _disposed) != 0
+                || expectedEpoch != Volatile.Read(ref _navigationEpoch)
+                || _control.IsDisposed || !_control.IsHandleCreated)
+                return;
+
+            try { _core.Navigate(uri); }
+            catch (Exception ex) when (ex is InvalidOperationException
+                or System.Runtime.InteropServices.COMException)
+            {
+                // The WebView can close while the confirmation dialog is open.
+            }
+        }
+
+        if (Volatile.Read(ref _disposed) != 0 || _control.IsDisposed || !_control.IsHandleCreated)
+            return;
+        // Always post the retry. A synchronous confirmation on the UI thread
+        // must fully unwind before Navigate starts the approved request.
+        try { _control.BeginInvoke((Action)NavigateIfCurrent); }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        {
+            // The window can close before the pending navigation is dispatched.
+        }
     }
 
     private async void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
@@ -240,9 +300,9 @@ public sealed class NetworkProtection : IDisposable
             }
             target = parsedTarget;
 
-            if (target.Scheme == Uri.UriSchemeHttp)
+            if (target.Scheme == Uri.UriSchemeHttp && !IsHttpApiRequest(args.ResourceContext))
             {
-                if (IsInsecureOriginApproved(target))
+                if (IsInsecureHostApproved(target))
                     return;
                 if (!AdminDashboardEndpoint.IsLocalOrigin(target) && !_siteAllowlist.IsAllowed(target))
                 {
@@ -310,8 +370,14 @@ public sealed class NetworkProtection : IDisposable
         return true;
     }
 
-    private bool IsInsecureOriginApproved(Uri target) =>
-        _approvedInsecureOrigins.ContainsKey(InsecureOriginKey(target));
+    private static bool IsHttpApiRequest(CoreWebView2WebResourceContext context) =>
+        context is CoreWebView2WebResourceContext.Fetch
+            or CoreWebView2WebResourceContext.XmlHttpRequest
+            or CoreWebView2WebResourceContext.EventSource
+            or CoreWebView2WebResourceContext.Ping;
+
+    private bool IsInsecureHostApproved(Uri target) =>
+        _approvedInsecureHosts.ContainsKey(InsecureHostKey(target));
 
     private static bool TryGetInsecureOrigin(string value, out Uri target)
     {
@@ -326,7 +392,7 @@ public sealed class NetworkProtection : IDisposable
         return true;
     }
 
-    private static string InsecureOriginKey(Uri uri) => uri.GetLeftPart(UriPartial.Authority);
+    private static string InsecureHostKey(Uri uri) => uri.IdnHost;
 
     private static bool IsTrustedInternalUri(Uri uri) =>
         string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
@@ -339,7 +405,7 @@ public sealed class NetworkProtection : IDisposable
         {
             _core.NavigationStarting -= OnNavigationStarting;
             _core.WebResourceRequested -= OnWebResourceRequested;
-            _approvedInsecureOrigins.Clear();
+            _approvedInsecureHosts.Clear();
         }
     }
 }
