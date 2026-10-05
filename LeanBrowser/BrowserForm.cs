@@ -1500,7 +1500,7 @@ public sealed partial class BrowserForm : Form
             start.ArgumentList.Add(update.Sha256);
             if (Process.Start(start) is null)
                 throw new IOException("Não foi possível iniciar o instalador da atualização.");
-            Close();
+            Application.Exit();
         }
         catch (OperationCanceledException) when (_updateLifetime.IsCancellationRequested) { }
         catch (Exception ex)

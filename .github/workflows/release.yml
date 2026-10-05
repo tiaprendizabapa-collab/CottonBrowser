@@ -99,6 +99,10 @@ jobs:
         shell: pwsh
         run: dotnet run --project BrowserUpdateChecks -c Release
 
+      - name: Verificar trava durante atualização
+        shell: pwsh
+        run: dotnet run --project CottonUpdaterChecks -c Release
+
       - name: Verificar downloads de mídia
         shell: pwsh
         run: dotnet run --project MediaDownloadChecks -c Release

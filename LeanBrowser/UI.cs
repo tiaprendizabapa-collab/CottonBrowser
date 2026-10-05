@@ -184,7 +184,13 @@ public sealed class ToolButton : Control
         if (Enabled && (_hot || _pressed))
         {
             using var brush = new SolidBrush(_pressed ? Theme.Divider : Theme.SurfaceHot);
-            g.FillEllipse(brush, 0, 0, Width - 1, Height - 1);
+            if (string.IsNullOrEmpty(Text))
+                g.FillEllipse(brush, 0, 0, Width - 1, Height - 1);
+            else
+            {
+                using var path = Draw.RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 10);
+                g.FillPath(brush, path);
+            }
         }
 
         var color = Enabled ? Theme.InkMuted : Theme.InkDisabled;
@@ -194,7 +200,14 @@ public sealed class ToolButton : Control
             Alignment = StringAlignment.Center,
             LineAlignment = StringAlignment.Center
         };
-
+        if (!string.IsNullOrEmpty(Text))
+        {
+            g.DrawString(Glyph, Font, textBrush, new RectangleF(6, 0, 24, Height), format);
+            format.Alignment = StringAlignment.Near;
+            g.DrawString(Text, Parent?.Font ?? SystemFonts.DefaultFont, textBrush,
+                new RectangleF(32, 0, Width - 34, Height), format);
+            return;
+        }
         g.DrawString(Glyph, Font, textBrush, new RectangleF(0, 0, Width, Height), format);
     }
 }

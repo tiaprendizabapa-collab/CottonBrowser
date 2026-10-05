@@ -294,6 +294,7 @@ public sealed class SettingsTab : TabPage
         SavePreferences();
     }
 
+
     public void ApplyTheme()
     {
         BackColor = Theme.Chrome;

@@ -55,6 +55,7 @@ public sealed record SiteExceptionSnapshot(int Version, string[] AllowedOrigins,
 /// <summary>Same-Windows-user prototype transport. It is not a remote policy distribution service.</summary>
 public sealed class SiteExceptionStore(string? path = null)
 {
+    private static readonly object UpdateGate = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -80,26 +81,45 @@ public sealed class SiteExceptionStore(string? path = null)
 
     public SiteExceptionSnapshot Write(IEnumerable<string> allowedOrigins)
     {
-        var origins = allowedOrigins.ToArray();
-        if (origins.Length > 200 || origins.Any(origin => !SiteExceptionAddress.IsCanonicalOrigin(origin)) ||
-            origins.Distinct(StringComparer.OrdinalIgnoreCase).Count() != origins.Length)
-            throw new ArgumentException("Origens inválidas ou duplicadas.", nameof(allowedOrigins));
+        lock (UpdateGate)
+        {
+            var origins = allowedOrigins.ToArray();
+            if (origins.Length > 200 || origins.Any(origin => !SiteExceptionAddress.IsCanonicalOrigin(origin)) ||
+                origins.Distinct(StringComparer.OrdinalIgnoreCase).Count() != origins.Length)
+                throw new ArgumentException("Origens inválidas ou duplicadas.", nameof(allowedOrigins));
 
-        var snapshot = new SiteExceptionSnapshot(1, origins, DateTimeOffset.UtcNow);
-        var directory = System.IO.Path.GetDirectoryName(PathOnDisk)
-            ?? throw new InvalidOperationException("Caminho de exceções inválido.");
-        Directory.CreateDirectory(directory);
-        var temporary = PathOnDisk + ".tmp-" + Guid.NewGuid().ToString("N");
-        try
-        {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(snapshot, JsonOptions));
-            File.Move(temporary, PathOnDisk, overwrite: true);
+            var snapshot = new SiteExceptionSnapshot(1, origins, DateTimeOffset.UtcNow);
+            var directory = System.IO.Path.GetDirectoryName(PathOnDisk)
+                ?? throw new InvalidOperationException("Caminho de exceções inválido.");
+            Directory.CreateDirectory(directory);
+            var temporary = PathOnDisk + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.WriteAllText(temporary, JsonSerializer.Serialize(snapshot, JsonOptions));
+                File.Move(temporary, PathOnDisk, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            return snapshot;
         }
-        finally
+    }
+
+    public SiteExceptionSnapshot SetAllowedOrigin(string origin, bool allowed)
+    {
+        if (!SiteExceptionAddress.IsCanonicalOrigin(origin))
+            throw new ArgumentException("Origem de site inválida.", nameof(origin));
+
+        lock (UpdateGate)
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            var snapshot = Read();
+            var origins = new HashSet<string>(snapshot.AllowedOrigins, StringComparer.OrdinalIgnoreCase);
+            var changed = allowed ? origins.Add(origin) : origins.Remove(origin);
+            if (!changed) return snapshot;
+
+            return Write(origins.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray());
         }
-        return snapshot;
     }
 }
 
@@ -126,4 +146,18 @@ public sealed class SiteAllowlist(SiteExceptionStore store)
         Volatile.Read(ref _origins).Contains(uri.GetLeftPart(UriPartial.Authority) + "/");
 
     public bool IsAllowed(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) && IsAllowed(uri);
+
+    public void SetAllowed(Uri uri, bool allowed)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri || uri.Scheme is not ("http" or "https"))
+            throw new ArgumentException("A exceção precisa apontar para um site HTTP ou HTTPS.", nameof(uri));
+
+        var origin = uri.GetLeftPart(UriPartial.Authority) + "/";
+        if (!SiteExceptionAddress.IsCanonicalOrigin(origin))
+            throw new ArgumentException("Origem de site inválida.", nameof(uri));
+
+        var snapshot = store.SetAllowedOrigin(origin, allowed);
+        Volatile.Write(ref _origins, new HashSet<string>(snapshot.AllowedOrigins, StringComparer.OrdinalIgnoreCase));
+    }
 }

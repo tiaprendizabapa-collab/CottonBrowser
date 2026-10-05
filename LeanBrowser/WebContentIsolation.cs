@@ -80,7 +80,7 @@ public static class WebContentIsolation
             ?? throw new InvalidOperationException("CoreWebView2 must be initialized before applying the isolation policy.");
 
         var settings = core.Settings;
-        settings.AreDevToolsEnabled = false;
+        settings.AreDevToolsEnabled = true;
         settings.AreBrowserAcceleratorKeysEnabled = false;
         settings.AreDefaultScriptDialogsEnabled = false;
         settings.IsReputationCheckingRequired = true;

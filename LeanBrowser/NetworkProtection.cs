@@ -293,7 +293,7 @@ public sealed class NetworkProtection : IDisposable
             }
             target = parsedTarget;
 
-            if (target.Scheme == Uri.UriSchemeHttp)
+            if (target.Scheme == Uri.UriSchemeHttp && !IsHttpApiRequest(args.ResourceContext))
             {
                 if (IsInsecureOriginApproved(target))
                     return;
@@ -362,6 +362,12 @@ public sealed class NetworkProtection : IDisposable
         upgraded = builder.Uri;
         return true;
     }
+
+    private static bool IsHttpApiRequest(CoreWebView2WebResourceContext context) =>
+        context is CoreWebView2WebResourceContext.Fetch
+            or CoreWebView2WebResourceContext.XmlHttpRequest
+            or CoreWebView2WebResourceContext.EventSource
+            or CoreWebView2WebResourceContext.Ping;
 
     private bool IsInsecureOriginApproved(Uri target) =>
         _approvedInsecureOrigins.ContainsKey(InsecureOriginKey(target));

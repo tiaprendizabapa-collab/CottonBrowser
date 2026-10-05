@@ -6,8 +6,8 @@ namespace LeanBrowser;
 
 /// <summary>
 /// Default-deny permission gate. Camera, microphone, location, and browser
-/// notifications are granted only once after an explicit decision in the
-/// trusted browser UI. No decision is written into the WebView2 profile.
+/// notifications are granted only once after an explicit decision in a
+/// native browser prompt. No decision is written into the WebView2 profile.
 /// </summary>
 public sealed class PermissionPolicy : IDisposable
 {
@@ -77,8 +77,15 @@ public sealed class PermissionPolicy : IDisposable
             || !TryGetSecureOrigin(args.Uri, out var origin))
             return;
 
-        var key = origin + "|" + args.PermissionKind;
-        if (_pendingByOriginAndKind.ContainsKey(key)) return;
+        var profileScope = core.Profile.IsInPrivateModeEnabled ? "private" : "regular";
+        var key = profileScope + "|" + origin + "|" + args.PermissionKind;
+        if (_pendingByOriginAndKind.TryGetValue(key, out var activeRequestId)
+            && _pending.TryGetValue(activeRequestId, out var activePending))
+        {
+            var sharedDeferral = args.GetDeferral();
+            _ = CompleteWithDecisionAsync(args, sharedDeferral, activePending.Decision.Task);
+            return;
+        }
 
         var requestId = Guid.NewGuid();
         var prompt = new PermissionPrompt(
@@ -119,19 +126,39 @@ public sealed class PermissionPolicy : IDisposable
     {
         try
         {
-            var allow = await pending.Decision.Task.WaitAsync(ConsentTimeout);
+            await CompleteWithDecisionAsync(
+                args,
+                deferral,
+                pending.Decision.Task,
+                () => pending.Decision.TrySetResult(false));
+        }
+        finally
+        {
+            _pending.TryRemove(pending.Prompt.Id, out _);
+            _pendingByOriginAndKind.TryRemove(pending.Key, out _);
+        }
+    }
+
+    private static async Task CompleteWithDecisionAsync(
+        CoreWebView2PermissionRequestedEventArgs args,
+        CoreWebView2Deferral deferral,
+        Task<bool> decision,
+        Action? onTimeout = null)
+    {
+        try
+        {
+            var allow = await decision.WaitAsync(ConsentTimeout);
             args.State = allow ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
         }
         catch (TimeoutException)
         {
+            onTimeout?.Invoke();
             args.State = CoreWebView2PermissionState.Deny;
         }
         finally
         {
             args.Handled = true;
             args.SavesInProfile = false;
-            _pending.TryRemove(pending.Prompt.Id, out _);
-            _pendingByOriginAndKind.TryRemove(pending.Key, out _);
             deferral.Complete();
         }
     }
