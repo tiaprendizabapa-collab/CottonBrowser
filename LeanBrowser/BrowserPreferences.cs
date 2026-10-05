@@ -5,8 +5,7 @@ namespace LeanBrowser;
 /// <summary>Preferências locais compartilhadas pelas janelas do navegador.</summary>
 public sealed class BrowserPreferences
 {
-    private static readonly Lazy<BrowserPreferences> Shared = new(() => Load(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "preferences.json")));
+    private static readonly Lazy<BrowserPreferences> Shared = new(() => Load(Path.Combine(BrowserPaths.DataDirectory, "preferences.json")));
     private readonly string _path;
     private readonly object _saveGate = new();
 
@@ -17,6 +16,13 @@ public sealed class BrowserPreferences
     public int SuspendAfterMinutes { get; set; } = 10;
     public string[] MemorySaverExceptions { get; set; } = [];
     public string SearchEngine { get; set; } = "Google";
+    public bool VerticalTabs { get; set; }
+    public bool VerticalTabsCollapsed { get; set; }
+    public string NewTabBackground { get; set; } = "Padrão";
+    public bool NewTabShowClock { get; set; } = true;
+    public bool NewTabShowGreeting { get; set; } = true;
+    public bool NewTabShowShortcuts { get; set; } = true;
+    public Bookmark[] NewTabShortcuts { get; set; } = [new("https://www.google.com/", "Google"), new("https://mail.google.com/", "Gmail"), new("https://drive.google.com/", "Drive"), new("https://github.com/", "GitHub")];
 
     private BrowserPreferences(string path) => _path = Path.GetFullPath(path);
 
@@ -33,6 +39,13 @@ public sealed class BrowserPreferences
             preferences.SuspendAfterMinutes = data.SuspendAfterMinutes;
             preferences.MemorySaverExceptions = data.MemorySaverExceptions ?? [];
             preferences.SearchEngine = data.SearchEngine ?? "Google";
+            preferences.VerticalTabs = data.VerticalTabs;
+            preferences.VerticalTabsCollapsed = data.VerticalTabsCollapsed;
+            preferences.NewTabBackground = data.NewTabBackground ?? "Padrão";
+            preferences.NewTabShowClock = data.NewTabShowClock;
+            preferences.NewTabShowGreeting = data.NewTabShowGreeting;
+            preferences.NewTabShowShortcuts = data.NewTabShowShortcuts;
+            if (data.NewTabShortcuts is not null) preferences.NewTabShortcuts = data.NewTabShortcuts;
             preferences.Normalize();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
@@ -53,7 +66,9 @@ public sealed class BrowserPreferences
                 {
                     RestoreSession = RestoreSession, MemorySaverEnabled = MemorySaverEnabled,
                     SuspendAfterMinutes = SuspendAfterMinutes, MemorySaverExceptions = MemorySaverExceptions,
-                    SearchEngine = SearchEngine
+                    SearchEngine = SearchEngine, VerticalTabs = VerticalTabs, VerticalTabsCollapsed = VerticalTabsCollapsed,
+                    NewTabBackground = NewTabBackground, NewTabShowClock = NewTabShowClock, NewTabShowGreeting = NewTabShowGreeting,
+                    NewTabShowShortcuts = NewTabShowShortcuts, NewTabShortcuts = NewTabShortcuts
                 };
                 File.WriteAllText(temporary, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
                 File.Move(temporary, _path, overwrite: true);
@@ -72,6 +87,9 @@ public sealed class BrowserPreferences
 
     private void Normalize()
     {
+        if (NewTabBackground is not ("Padrão" or "Azul" or "Verde" or "Pôr do sol")) NewTabBackground = "Padrão";
+        NewTabShortcuts = (NewTabShortcuts ?? []).Where(b => b is not null && BookmarkStore.IsWebUrl(b.Url) && !string.IsNullOrWhiteSpace(b.Title))
+            .DistinctBy(b => b.Url).Take(12).Select(b => b with { Title = b.Title[..Math.Min(80, b.Title.Length)] }).ToArray();
         SuspendAfterMinutes = Math.Clamp(SuspendAfterMinutes, 1, 240);
         SearchEngine = SearchEngine?.ToLowerInvariant() switch
         {
@@ -109,5 +127,12 @@ public sealed class BrowserPreferences
         public int SuspendAfterMinutes { get; set; } = 10;
         public string[]? MemorySaverExceptions { get; set; } = [];
         public string? SearchEngine { get; set; } = "Google";
+        public bool VerticalTabs { get; set; }
+        public bool VerticalTabsCollapsed { get; set; }
+        public string? NewTabBackground { get; set; } = "Padrão";
+        public bool NewTabShowClock { get; set; } = true;
+        public bool NewTabShowGreeting { get; set; } = true;
+        public bool NewTabShowShortcuts { get; set; } = true;
+        public Bookmark[]? NewTabShortcuts { get; set; }
     }
 }

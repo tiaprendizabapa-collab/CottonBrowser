@@ -12,6 +12,7 @@ public sealed class ProfileTab : TabPage
     private readonly Label _roleCaption = new() { AutoSize = true, Text = "Perfil de acesso", Font = new Font(Theme.UiFont, 9f, FontStyle.Bold) };
     private readonly Label _roleValue = new() { AutoSize = true, Font = new Font(Theme.UiFont, 11f, FontStyle.Bold) };
     private readonly Label _permissionValue = new() { AutoSize = true };
+    public event Action? ManageProfilesRequested;
 
     public ProfileTab(AccessControl access) : base("Perfil")
     {
@@ -34,6 +35,9 @@ public sealed class ProfileTab : TabPage
         _card.Controls.Add(_roleCaption);
         _card.Controls.Add(_roleValue);
         _card.Controls.Add(_permissionValue);
+        var profiles = new Button { Text = "Gerenciar perfis de navegação…", AutoSize = true, Location = new Point(26, 220), FlatStyle = FlatStyle.Flat, BackColor = Theme.Surface, ForeColor = Theme.Ink };
+        profiles.Click += (_, _) => ManageProfilesRequested?.Invoke(); _card.Controls.Add(profiles); _card.Height = 280;
+        _subtitle.Text = "Perfil de navegação: " + new BrowserProfileStore(BrowserPaths.Root).Load().First(p => p.Id == BrowserPaths.ProfileId).Name;
         Controls.Add(_card);
         Resize += (_, _) => LayoutCard();
         LayoutCard();

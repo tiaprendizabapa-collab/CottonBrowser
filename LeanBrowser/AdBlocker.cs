@@ -61,9 +61,7 @@ public sealed class AdBlocker
     /// Caminho da lista editavel pelo usuario. Se existir, tem prioridade
     /// sobre a lista embutida no executavel.
     /// </summary>
-    public static string UserListPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "LeanBrowser", "blocklist.txt");
+    public static string UserListPath => Path.Combine(BrowserPaths.ThemeDirectory, "blocklist.txt");
 
     private void LoadDomains()
     {

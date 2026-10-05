@@ -64,7 +64,7 @@ disponível em `.tools\prerequisites`.
 | `Ctrl+T` | Abrir nova aba |
 | `Ctrl+Shift+T` | Reabrir a última aba normal fechada |
 | `Ctrl+Shift+E` | Pesquisar nas abas abertas |
-| `Ctrl+H` | Abrir o histórico completo |
+| `Ctrl+H` | Abrir a seção Histórico nas configurações |
 | `Ctrl+W` | Fechar a aba selecionada |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Próxima / anterior |
 | `Ctrl+N` | Abrir nova janela |
@@ -77,11 +77,53 @@ disponível em `.tools\prerequisites`.
 | `Alt+←` / `Alt+→` | Voltar / avançar |
 | `Alt+Home` | Abrir a página inicial |
 | `F11` | Alternar tela cheia |
+| `F9` | Entrar ou sair do modo de leitura |
 | `Ctrl+Shift+A` | Alternar a proteção de anúncios e recarregar as abas |
 | `F12` / `Ctrl+Shift+I` | Abrir o inspetor da guia atual |
 
 O menu de três pontos e o menu de contexto também oferecem **Inspecionar
 página**. O inspetor abre em uma janela separada do WebView2.
+
+## Favoritos, leitura e personalização
+
+Em **Configurações > Favoritos**, crie pastas e subpastas, renomeie favoritos,
+edite endereços, mova itens para outra pasta e use as setas para reordenar.
+**Importar HTML** aceita arquivos exportados por outros navegadores e mantém
+a hierarquia de pastas; **Exportar HTML** gera um arquivo compatível. A importação
+aceita até 10 MB e 20.000 favoritos por arquivo, sem substituir os já salvos.
+
+No menu de três pontos, **Modo de leitura** extrai o texto principal da página
+e permite ajustar tamanho da fonte, espaçamento e fundo claro ou escuro.
+**Voltar à página**, ou `F9`, recupera o documento original. Páginas sem texto
+suficiente continuam no modo normal.
+
+**Traduzir página** oferece português, inglês, espanhol e francês usando o
+Google Tradutor. O endereço da página pública é enviado ao serviço. Páginas
+internas, endereços locais e URLs com credenciais não são aceitos; conteúdo que
+exige login pode não estar disponível no tradutor. O submenu permite voltar
+à página original.
+
+**Abas verticais** move as abas para a lateral, mantendo grupos, busca e abas
+fixadas. O botão na lateral recolhe a lista para ícones. **Tela dividida** permite
+escolher outra aba e ajustar a largura das duas páginas. A divisão usa os
+documentos já abertos; encerrá-la preserva as duas abas. Selecionar outra aba
+ou fechar uma das páginas encerra a divisão.
+
+**Capturar página** oferece área visível, página inteira ou seleção por arraste,
+com prévia para copiar a imagem ou salvar em PNG. Páginas acima de 40 milhões
+de pixels, 16.384 pixels de largura ou 32.768 de altura devem ser capturadas
+por partes.
+
+**Gerenciar perfis** cria e renomeia perfis, como Pessoal e Trabalho. Cada um
+abre em uma janela própria e mantém cookies, logins, favoritos, histórico,
+sessão, preferências e dados do WebView2 separados. O perfil padrão conserva
+os dados existentes. Novos perfis ficam em `%LOCALAPPDATA%\LeanBrowser\Profiles\<id>`;
+o cadastro dos nomes fica em `browser-profiles.json` no diretório principal.
+
+Em **Configurações > Nova guia**, escolha um dos quatro fundos, mostre ou
+oculte relógio, saudação e atalhos, e adicione, edite, remova ou reordene até
+12 atalhos. As alterações são aplicadas às novas guias abertas do mesmo perfil.
+O menu **Personalizar nova guia** abre diretamente essa seção.
 
 ## Barra de endereços
 
@@ -125,9 +167,10 @@ Downloads em andamento também impedem a suspensão. São verificações
 conservadoras; páginas que fazem trabalho em segundo plano podem ser
 incluídas nas exceções. Um “z” identifica as abas suspensas.
 
-O histórico (`Ctrl+H`) armazena até 10.000 visitas, mostra datas e horários
-e também aparece dentro das configurações pelo item **Histórico** na barra lateral,
-sem abrir outra aba.
+O histórico armazena até 10.000 visitas e mostra datas e horários. O item
+**Histórico** do menu de três pontos e o atalho `Ctrl+H` abrem diretamente essa
+seção dentro das configurações. O item da barra lateral mostra o mesmo painel.
+Se a aba de configurações já estiver aberta, ela é reutilizada.
 Ele permite pesquisar sem diferenciar acentos, excluir visitas selecionadas
 ou apagar um período. A exclusão por período também atinge os resultados
 fora da pesquisa atual. Visitas anônimas não são registradas.

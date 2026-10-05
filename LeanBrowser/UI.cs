@@ -106,6 +106,21 @@ public static class Theme
 /// <summary>Utilitarios de desenho compartilhados.</summary>
 public static class Draw
 {
+    /// <summary>Usa o mesmo símbolo com cantos transparentes no cabeçalho e nas configurações.</summary>
+    internal static Image? LoadCottonIcon()
+    {
+        using var stream = typeof(Draw).Assembly.GetManifestResourceStream("LeanBrowser.Assets.AbapaLogo.png");
+        if (stream is null) return null;
+        using var source = Image.FromStream(stream); using var logo = new Bitmap(source);
+        var width = Math.Min(logo.Width, (int)(logo.Height * 1.08f)); var outside = new bool[width, logo.Height]; var queue = new Queue<Point>();
+        void Enqueue(int x, int y) { if (x < 0 || x >= width || y < 0 || y >= logo.Height || outside[x, y] || logo.GetPixel(x, y).A != 0) return; outside[x, y] = true; queue.Enqueue(new Point(x, y)); }
+        for (var x = 0; x < width; x++) { Enqueue(x, 0); Enqueue(x, logo.Height - 1); }
+        for (var y = 0; y < logo.Height; y++) { Enqueue(0, y); Enqueue(width - 1, y); }
+        while (queue.TryDequeue(out var p)) { Enqueue(p.X - 1, p.Y); Enqueue(p.X + 1, p.Y); Enqueue(p.X, p.Y - 1); Enqueue(p.X, p.Y + 1); }
+        for (var y = 0; y < logo.Height; y++) for (var x = 0; x < width; x++) if (logo.GetPixel(x, y).A == 0 && !outside[x, y]) logo.SetPixel(x, y, Color.White);
+        return logo.Clone(new Rectangle(0, 0, width, logo.Height), logo.PixelFormat);
+    }
+
     public static GraphicsPath RoundedRect(Rectangle r, int radius)
     {
         var d = radius * 2;

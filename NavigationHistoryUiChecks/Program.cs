@@ -76,6 +76,10 @@ internal static class Program
                 Get<TextBox>(settings, "_searchInput").Text = "palavra-sem-resultado";
                 Pump();
                 Check(!view.Visible, "O cartão de histórico deve respeitar a pesquisa das configurações.");
+                settings.ShowHistory(); Pump();
+                Check(view.Visible && Get<Label>(settings, "_title").Text == "Histórico" && tabs.TabPages.Count == count,
+                    "O acesso externo ao histórico deve selecionar a seção existente e limpar a pesquisa das configurações.");
+                Check(Get<TextBox>(view, "_search").Focused, "O acesso externo deve deixar a busca do histórico pronta para digitar.");
             }
             foreach (var width in new[] { 560, 1200 })
             {
