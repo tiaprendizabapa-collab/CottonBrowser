@@ -63,13 +63,33 @@ internal static class Program
     private sealed class BrowserApplicationContext : ApplicationContext
     {
         private readonly HashSet<BrowserForm> _windows = new();
-        public BrowserApplicationContext() => OpenNewWindow();
+        private readonly BrowserSessionStore _sessions = new(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser", "session.json"));
+        private readonly System.Windows.Forms.Timer _sessionSave = new() { Interval = 750 };
+        private bool _starting = true;
+        public BrowserApplicationContext()
+        {
+            _sessionSave.Tick += (_, _) => { _sessionSave.Stop(); SaveSession(cleanShutdown: false); };
+            var saved = _sessions.Load();
+            var restore = BrowserPreferences.Current.RestoreSession;
+            if (!saved.CleanShutdown && saved.Windows.Length > 0)
+                restore = MessageBox.Show("O CottonBrowser foi encerrado inesperadamente. Deseja recuperar suas abas?",
+                    "Recuperar sessão", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+            if (_sessions.Error is { } error)
+                MessageBox.Show(error, "Sessão anterior", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (restore && saved.Windows.Length > 0)
+                foreach (var window in saved.Windows) CreateBrowserWindow(restoredSession: window);
+            else OpenNewWindow();
+            _starting = false;
+            SaveSession(cleanShutdown: false);
+        }
         private void OpenNewWindow() => CreateBrowserWindow();
 
-        private BrowserForm CreateBrowserWindow(string? initialUrl = null, bool isPrivate = false)
+        private BrowserForm CreateBrowserWindow(string? initialUrl = null, bool isPrivate = false,
+            BrowserWindowSession? restoredSession = null)
         {
             var previous = _windows.LastOrDefault();
-            var form = new BrowserForm(initialUrl, isPrivate);
+            var form = new BrowserForm(initialUrl, isPrivate, restoredSession);
             if (previous is not null)
             {
                 var workArea = Screen.FromControl(previous).WorkingArea;
@@ -81,10 +101,35 @@ internal static class Program
             }
             form.NewWindowRequested += OpenNewWindow;
             form.DetachedTabWindowRequested += OpenDetachedTabWindowAsync;
+            form.SessionChanged += OnSessionChanged;
+            form.FormClosing += OnBrowserWindowClosing;
             form.FormClosed += OnBrowserWindowClosed;
             _windows.Add(form);
             form.Show();
             return form;
+        }
+
+        private void OnSessionChanged()
+        {
+            if (_starting) return;
+            _sessionSave.Stop();
+            _sessionSave.Start();
+        }
+
+        private void SaveSession(bool cleanShutdown, BrowserForm? excluding = null)
+        {
+            var windows = _windows.Where(form => form != excluding)
+                .Select(form => form.CaptureSession()).Where(window => window.Tabs.Length > 0).ToArray();
+            _sessions.Save(new(windows, cleanShutdown));
+        }
+
+        private void OnBrowserWindowClosing(object? sender, FormClosingEventArgs e)
+        {
+            if (e.Cancel || sender is not BrowserForm form || _starting) return;
+            _sessionSave.Stop();
+            // A window closed by its X keeps its tabs for the next launch. Closing
+            // the final tab intentionally leaves an empty session instead.
+            SaveSession(_windows.Count == 1, _windows.Count > 1 ? form : null);
         }
 
         private async Task<bool> OpenDetachedTabWindowAsync(string url, bool isPrivate)
@@ -97,7 +142,13 @@ internal static class Program
             if (sender is not BrowserForm form || !_windows.Remove(form)) return;
             form.NewWindowRequested -= OpenNewWindow;
             form.DetachedTabWindowRequested -= OpenDetachedTabWindowAsync;
-            if (_windows.Count == 0) ExitThread();
+            form.SessionChanged -= OnSessionChanged;
+            form.FormClosing -= OnBrowserWindowClosing;
+            if (_windows.Count == 0)
+            {
+                _sessionSave.Dispose();
+                ExitThread();
+            }
         }
     }
 

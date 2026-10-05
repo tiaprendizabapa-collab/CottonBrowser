@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.15.0'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+}
+
+def ciBuildNumber = System.getenv('GITHUB_RUN_NUMBER')
+def mobileVersionCode = ciBuildNumber?.isInteger() ? ciBuildNumber.toInteger() : 1
+
+android {
+    namespace 'com.cottonbrowser.mobile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.cottonbrowser.mobile'
+        minSdk 26
+        targetSdk 35
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        versionCode mobileVersionCode
+        versionName "0.2.0-preview.${mobileVersionCode}"
+        resValue 'string', 'source_commit', System.getenv('GITHUB_SHA') ?: 'local'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            debuggable false
+            // Prévia instalável; uma chave de publicação estável requer secrets do repositório.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

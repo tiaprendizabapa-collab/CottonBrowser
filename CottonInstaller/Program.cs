@@ -19,9 +19,15 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        ApplicationConfiguration.Initialize();
+        var verifying = args.SequenceEqual(["--verify-package"]);
         try
         {
+            ApplicationConfiguration.Initialize();
+            if (verifying)
+            {
+                VerifyPackage();
+                return 0;
+            }
             if (args.SequenceEqual(["--install"]))
             {
                 Install();
@@ -55,8 +61,8 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            try { File.WriteAllText(Path.Combine(Path.GetTempPath(), "CottonBrowserSetup-last-error.txt"), ex.ToString()); }
-            catch { }
+            SaveError(ex);
+            if (verifying) { Console.Error.WriteLine(ex); return 1; }
             MessageBox.Show("Não foi possível concluir a operação.\n\n" + ex.Message,
                 ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
@@ -66,10 +72,12 @@ internal static class Program
     internal static string Destination => InstallDirectory;
     internal static string Version => Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
 
-    internal static void Install()
+    internal static void Install(Action<string>? report = null)
     {
+        report ??= _ => { };
         if (Directory.Exists(InstallDirectory) &&
-            !File.Exists(Path.Combine(InstallDirectory, "CottonBrowserUninstall.exe")))
+            !File.Exists(Path.Combine(InstallDirectory, "CottonBrowserUninstall.exe")) &&
+            Directory.EnumerateFileSystemEntries(InstallDirectory).Any())
             throw new IOException("A pasta de instalação já existe e não pertence a este instalador: " + InstallDirectory);
         EnsureBrowserClosed();
 
@@ -84,7 +92,10 @@ internal static class Program
         try
         {
             Directory.CreateDirectory(extracted);
+            report("Conferindo os arquivos do navegador…");
             var files = ExtractPayload(extracted);
+            WebView2Runtime.EnsureInstalled(Path.Combine(staging, "prerequisites"), report);
+            report("Instalando o CottonBrowser e criando o atalho…");
             Directory.CreateDirectory(InstallDirectory);
             foreach (var relative in files)
             {
@@ -162,6 +173,66 @@ internal static class Program
             if (!rollbackFailed)
                 try { Directory.Delete(staging, recursive: true); } catch { }
         }
+    }
+
+    private static void VerifyPackage()
+    {
+        var staging = Path.Combine(Path.GetTempPath(), "CottonBrowserSetupCheck-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            // Cria os controles sem mostrar uma janela nem alterar a instalação do usuário.
+            using var form = new InstallerForm();
+            _ = form.Handle;
+            var files = ExtractPayload(Path.Combine(staging, "app"));
+            foreach (var name in new[] { "CottonBrowser.exe", "CottonUpdater.exe" })
+            {
+                var path = Path.Combine(staging, "app", name);
+                using var input = File.OpenRead(path);
+                if (input.ReadByte() != 'M' || input.ReadByte() != 'Z' || new FileInfo(path).Length < 1024 * 1024)
+                    throw new InvalidDataException("Executável incompleto no setup: " + name);
+                if (FileVersionInfo.GetVersionInfo(path).FileVersion != Version + ".0")
+                    throw new InvalidDataException("A versão do setup difere de " + name);
+            }
+            var updater = Path.Combine(staging, "app", "CottonUpdater.exe");
+            using var process = Process.Start(new ProcessStartInfo(updater)
+            {
+                UseShellExecute = false, CreateNoWindow = true, Arguments = "--verify-runtime", WorkingDirectory = staging
+            }) ?? throw new IOException("O atualizador não iniciou no teste isolado.");
+            if (!process.WaitForExit(60_000) || process.ExitCode != 0)
+                throw new IOException("O atualizador não funciona sem arquivos externos.");
+            var runtime = WebView2Runtime.ExtractOfflineInstaller(Path.Combine(staging, "prerequisites"));
+            if (WebView2Runtime.IsInstalledVersion(null) || WebView2Runtime.IsInstalledVersion("0.0.0.0") ||
+                WebView2Runtime.IsInstalledVersion("inválido") || !WebView2Runtime.IsInstalledVersion("100.0.0.0"))
+                throw new InvalidDataException("A verificação de presença do WebView2 falhou.");
+            Console.WriteLine($"Setup {Version}: {files.Count} arquivos, atualizador independente e WebView2 offline ({new FileInfo(runtime).Length} bytes) verificados.");
+        }
+        finally
+        {
+            var fullPath = Path.GetFullPath(staging);
+            var tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) && Directory.Exists(fullPath))
+                Directory.Delete(fullPath, recursive: true);
+        }
+    }
+
+    private static void SaveError(Exception error)
+    {
+        try { File.WriteAllText(Path.Combine(Path.GetTempPath(), "CottonBrowserSetup-last-error.txt"), error.ToString()); }
+        catch { }
+    }
+
+    private static Task InstallAsync(Action<string> report)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var worker = new Thread(() =>
+        {
+            try { Install(report); completion.SetResult(); }
+            catch (Exception ex) { completion.SetException(ex); }
+        }) { IsBackground = true };
+        // A criação de atalhos pelo Windows Script Host mantém o mesmo apartamento COM da instalação original.
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.Start();
+        return completion.Task;
     }
 
     private static List<string> ExtractPayload(string destination)
@@ -264,6 +335,7 @@ internal static class Program
 
     private sealed class InstallerForm : Form
     {
+        private bool _installing;
         internal InstallerForm()
         {
             Text = "Instalar CottonBrowser";
@@ -272,7 +344,7 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(420, 190);
+            ClientSize = new Size(480, 310);
             Font = new Font("Segoe UI", 10);
 
             var title = new Label { Text = "CottonBrowser " + Version, Font = new Font(Font, FontStyle.Bold),
@@ -280,28 +352,41 @@ internal static class Program
             var description = new Label { Text = "Instalar para este usuário e adicionar ao menu Iniciar.",
                 AutoSize = true, Location = new Point(24, 60) };
             var path = new Label { Text = Destination, AutoEllipsis = true,
-                Location = new Point(24, 91), Size = new Size(372, 42) };
-            var install = new Button { Text = "Instalar", Location = new Point(288, 143),
+                Location = new Point(24, 91), Size = new Size(432, 42) };
+            var prerequisites = new Label { Text = "Inclui o Microsoft WebView2 e os componentes do navegador.\nNão é necessário baixar outros arquivos para instalar.",
+                Location = new Point(24, 140), Size = new Size(432, 50) };
+            var status = new Label { Text = "Pronto para instalar.", AutoEllipsis = true,
+                Location = new Point(24, 194), Size = new Size(432, 42) };
+            var progressBar = new ProgressBar { Location = new Point(24, 245), Size = new Size(432, 5), Visible = false };
+            var install = new Button { Text = "Instalar", Location = new Point(348, 267),
                 Size = new Size(108, 32) };
-            install.Click += (_, _) =>
+            FormClosing += (_, e) => { if (_installing) e.Cancel = true; };
+            install.Click += async (_, _) =>
             {
-                install.Enabled = false;
+                install.Enabled = false; _installing = true;
+                progressBar.Style = ProgressBarStyle.Marquee; progressBar.Visible = true;
+                var progress = new Progress<string>(message => status.Text = message);
                 try
                 {
-                    Install();
+                    await InstallAsync(((IProgress<string>)progress).Report);
+                    _installing = false;
                     MessageBox.Show(this, "CottonBrowser instalado. Procure por CottonBrowser no menu Iniciar.",
                         ProductName, MessageBoxButtons.OK, MessageBoxIcon.Information);
                     Close();
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, "Falha na instalação.\n\n" + ex.Message,
+                    SaveError(ex);
+                    status.Text = "A instalação não foi concluída. Você pode tentar novamente.";
+                    MessageBox.Show(this, "Falha na instalação.\n\n" + ex.Message +
+                        "\n\nDetalhes salvos em: " + Path.Combine(Path.GetTempPath(), "CottonBrowserSetup-last-error.txt"),
                         ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
                     install.Enabled = true;
                 }
+                finally { _installing = false; progressBar.Visible = false; }
             };
             AcceptButton = install;
-            Controls.AddRange([title, description, path, install]);
+            Controls.AddRange([title, description, path, prerequisites, status, progressBar, install]);
         }
     }
 }

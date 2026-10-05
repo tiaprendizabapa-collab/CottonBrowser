@@ -138,12 +138,9 @@ public sealed class WebRiskReputationService : IUrlReputationService, IDisposabl
 }
 
 /// <summary>
-/// Intercepts HTTP resources before they are sent and upgrades them to HTTPS.
-/// API requests keep their requested scheme so HTTP applications can reach
-/// API servers that do not offer TLS on their service port; WebView2's native
-/// mixed-content policy still governs those requests from HTTPS documents.
-/// Document requests are held with a WebView2 deferral until the URL is
-/// checked by the reputation provider. A known malicious URL is blocked;
+/// Intercepts every HTTP resource before it is sent and upgrades it to HTTPS.
+/// Document requests are then held with a WebView2 deferral until the URL is
+/// checked by the reputation provider.  A known malicious URL is blocked;
 /// unavailable reputation data does not make the browser unusable.
 /// </summary>
 public sealed class NetworkProtection : IDisposable
@@ -158,11 +155,7 @@ public sealed class NetworkProtection : IDisposable
     private readonly IUrlReputationService _reputation;
     private readonly SiteAllowlist _siteAllowlist;
     private readonly Func<Uri, Task<bool>> _confirmInsecureNavigation;
-    // A user who accepts an HTTP site must also be able to submit its login
-    // form to a backend on another port of the same host (common for intranet
-    // applications). Keep this approval limited to the current tab and host; the
-    // persistent allowlist remains exact to scheme, host, and port.
-    private readonly ConcurrentDictionary<string, byte> _approvedInsecureHosts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _approvedInsecureOrigins = new(StringComparer.OrdinalIgnoreCase);
     private long _navigationEpoch;
     private int _disposed;
 
@@ -198,7 +191,7 @@ public sealed class NetworkProtection : IDisposable
             || !TryGetInsecureOrigin(args.Uri, out var target)
             || AdminDashboardEndpoint.IsLocalOrigin(target)
             || _siteAllowlist.IsAllowed(target)
-            || IsInsecureHostApproved(target))
+            || IsInsecureOriginApproved(target))
             return;
 
         // The request has not reached the network yet. Cancel it, obtain an
@@ -246,7 +239,7 @@ public sealed class NetworkProtection : IDisposable
 
         if (accepted)
         {
-            _approvedInsecureHosts.TryAdd(InsecureHostKey(target), 0);
+            _approvedInsecureOrigins.TryAdd(InsecureOriginKey(target), 0);
             NavigateOnUiThread(requestUri, epoch);
             return;
         }
@@ -302,7 +295,7 @@ public sealed class NetworkProtection : IDisposable
 
             if (target.Scheme == Uri.UriSchemeHttp && !IsHttpApiRequest(args.ResourceContext))
             {
-                if (IsInsecureHostApproved(target))
+                if (IsInsecureOriginApproved(target))
                     return;
                 if (!AdminDashboardEndpoint.IsLocalOrigin(target) && !_siteAllowlist.IsAllowed(target))
                 {
@@ -376,8 +369,8 @@ public sealed class NetworkProtection : IDisposable
             or CoreWebView2WebResourceContext.EventSource
             or CoreWebView2WebResourceContext.Ping;
 
-    private bool IsInsecureHostApproved(Uri target) =>
-        _approvedInsecureHosts.ContainsKey(InsecureHostKey(target));
+    private bool IsInsecureOriginApproved(Uri target) =>
+        _approvedInsecureOrigins.ContainsKey(InsecureOriginKey(target));
 
     private static bool TryGetInsecureOrigin(string value, out Uri target)
     {
@@ -392,7 +385,7 @@ public sealed class NetworkProtection : IDisposable
         return true;
     }
 
-    private static string InsecureHostKey(Uri uri) => uri.IdnHost;
+    private static string InsecureOriginKey(Uri uri) => uri.GetLeftPart(UriPartial.Authority);
 
     private static bool IsTrustedInternalUri(Uri uri) =>
         string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
@@ -405,7 +398,7 @@ public sealed class NetworkProtection : IDisposable
         {
             _core.NavigationStarting -= OnNavigationStarting;
             _core.WebResourceRequested -= OnWebResourceRequested;
-            _approvedInsecureHosts.Clear();
+            _approvedInsecureOrigins.Clear();
         }
     }
 }

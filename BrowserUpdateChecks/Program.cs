@@ -6,13 +6,16 @@ using System.Text.Json;
 using LeanBrowser;
 
 var failures = new List<string>();
+var checkCount = 0;
 void Check(bool condition, string name)
 {
+    checkCount++;
     if (!condition) failures.Add(name);
 }
 
 const string assetUrl = "https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/download/v1.0.1/CottonBrowser-win-x64.zip";
-var package = BuildPackage(21_000_001);
+const int updaterSize = 68_000_000;
+var package = BuildPackage(updaterSize);
 var digest = Convert.ToHexString(SHA256.HashData(package)).ToLowerInvariant();
 var releaseJson = JsonSerializer.Serialize(new
 {
@@ -27,6 +30,16 @@ var stagingRoot = Path.Combine(Path.GetTempPath(), "cotton-update-check-" + Guid
 Directory.CreateDirectory(stagingRoot);
 try
 {
+    var preferencePath = Path.Combine(stagingRoot, "update-notice.txt");
+    var preferences = new UpdateNoticePreferenceStore(preferencePath);
+    Check(!preferences.Suppressed, "update notice starts enabled");
+    preferences.SetSuppressed(true);
+    Check(new UpdateNoticePreferenceStore(preferencePath).Suppressed,
+        "do not show again persists across restarts");
+    preferences.SetSuppressed(false);
+    Check(!new UpdateNoticePreferenceStore(preferencePath).Suppressed,
+        "update notice can be enabled again");
+
     using var client = new HttpClient(new FakeHandler(request =>
         request.RequestUri?.Host == "api.github.com"
             ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(releaseJson, Encoding.UTF8, "application/json") }
@@ -41,8 +54,8 @@ try
     {
         var staged = await service.DownloadAsync(update, null, CancellationToken.None);
         Check(File.Exists(staged.ArchivePath) &&
-              new FileInfo(staged.UpdaterPath).Length == 21_000_001,
-            "self-contained updater larger than 20 MB is accepted");
+              new FileInfo(staged.UpdaterPath).Length == updaterSize,
+            "self-contained updater the size of the published executable is accepted");
         try
         {
             await service.DownloadAsync(update with { Sha256 = new string('0', 64) }, null,
@@ -77,6 +90,31 @@ try
         Check(false, "untrusted asset URL rejected");
     }
     catch (InvalidDataException) { Check(true, "untrusted asset URL rejected"); }
+
+    if (args.Length > 0)
+    {
+        if (args.Length != 2 || args[0] != "--package" || !File.Exists(args[1]))
+            throw new ArgumentException("Uso: BrowserUpdateChecks [--package caminho-do-zip]");
+
+        var publishedPackage = Path.GetFullPath(args[1]);
+        long updaterLength;
+        using (var archive = ZipFile.OpenRead(publishedPackage))
+            updaterLength = archive.GetEntry("CottonUpdater.exe")?.Length ?? 0;
+        string publishedHash;
+        await using (var input = File.OpenRead(publishedPackage))
+            publishedHash = Convert.ToHexString(await SHA256.HashDataAsync(input)).ToLowerInvariant();
+
+        using var packageClient = new HttpClient(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StreamContent(File.OpenRead(publishedPackage))
+        }));
+        using var packageService = new BrowserUpdateService(packageClient, stagingRoot);
+        var publishedUpdate = new BrowserUpdate(new Version(1, 0, 1, 0), "v1.0.1",
+            new Uri(assetUrl), publishedHash, new FileInfo(publishedPackage).Length);
+        var publishedStaging = await packageService.DownloadAsync(publishedUpdate, null, CancellationToken.None);
+        Check(updaterLength > 0 && new FileInfo(publishedStaging.UpdaterPath).Length == updaterLength,
+            "published ZIP can be staged by the browser updater");
+    }
 }
 finally
 {
@@ -93,7 +131,7 @@ if (failures.Count > 0)
     Console.Error.WriteLine("Falhas: " + string.Join(", ", failures));
     return 1;
 }
-Console.WriteLine("6 verificações do atualizador passaram.");
+Console.WriteLine($"{checkCount} verificações do atualizador passaram.");
 return 0;
 
 static byte[] BuildPackage(int updaterSize)

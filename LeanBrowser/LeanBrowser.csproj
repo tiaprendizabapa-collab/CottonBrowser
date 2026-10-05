@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>CottonBrowser</AssemblyName>
-    <Version>1.0.2</Version>
+    <Version>1.0.33</Version>
     <RootNamespace>LeanBrowser</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\CottonBrowser.ico</ApplicationIcon>
@@ -75,7 +75,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- As paginas locais usam estes arquivos por meio do mapeamento de host virtual do
+    <!-- A Central usa estes arquivos por meio do mapeamento de host virtual do
          WebView2. Eles precisam permanecer como arquivos reais ao lado do EXE;
          um bundle single-file não disponibiliza esse diretório ao WebView2. -->
     <None Update="Assets\Bridge\**\*"

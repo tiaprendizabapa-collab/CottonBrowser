@@ -14,8 +14,12 @@ e escolha **Fixar em Iniciar**.
 O instalador preserva o perfil de navegação em AppData. O pacote de atualização
 continua sendo `CottonBrowser-win-x64.zip`; a Release também oferece
 `CottonBrowserSetup.exe` para novas instalações. Ambos são gerados pelo mesmo
-script. O instalador, o navegador e o atualizador incluem o runtime .NET 8;
-o WebView2 Runtime ainda precisa estar disponível no Windows.
+script. O instalador, o navegador e o atualizador incluem o runtime .NET 8 e suas
+bibliotecas nativas. O setup também contém o instalador completo e assinado do
+Microsoft Edge WebView2 Runtime para Windows x64. Se o componente estiver ausente,
+o setup o instala antes de copiar o navegador, sem baixar arquivos adicionais.
+Para instalar em outro computador, basta enviar `CottonBrowserSetup.exe`.
+O arquivo é compatível com Windows 10/11 de 64 bits.
 
 Se o navegador foi instalado pelo `CottonBrowserSetup.exe`, baixar ou atualizar
 os arquivos-fonte do GitHub não troca o executável instalado. Para receber a
@@ -54,6 +58,7 @@ arquivos estão disponíveis. Para publicar uma versão manualmente, ainda é po
 enviar uma tag `vMAJOR.MINOR.PATCH` maior que a versão publicada.
 
 A primeira instalação do recurso de atualização precisa ser manual em versões
-antigas que não consultam a API do GitHub. O pacote requer WebView2 Runtime no
-Windows x64. Instalações em pastas sem permissão de escrita, como `Program
+antigas que não consultam a API do GitHub. O setup prepara o WebView2 Runtime
+quando necessário; o ZIP de atualização pressupõe uma instalação existente.
+Instalações em pastas sem permissão de escrita, como `Program
 Files`, precisam de um instalador com elevação.

@@ -1,0 +1,1566 @@
+package com.cottonbrowser.mobile;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.content.ClipboardManager;
+import android.content.ClipData;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.pm.ProviderInfo;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.graphics.Insets;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.Message;
+import android.os.Process;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
+import android.webkit.SslErrorHandler;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.net.http.SslError;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.PopupMenu;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.CheckBox;
+import android.text.Editable;
+import android.text.TextWatcher;
+
+import androidx.webkit.ScriptHandler;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URLEncoder;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import javax.net.ssl.HttpsURLConnection;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/** A deliberately local-first browser. Web pages never receive a JavaScript bridge. */
+public final class MainActivity extends Activity {
+    private static final int BACKGROUND = 0xFF1D1D2B;
+    private static final int HEADER = 0xFF202131;
+    private static final int SURFACE = 0xFF303246;
+    private static final int SURFACE_ACTIVE = 0xFF41445C;
+    private static final int TEXT = 0xFFF5F3FF;
+    private static final int MUTED = 0xFFB4B4CB;
+    private static final int ACCENT = 0xFFB69BFF;
+    private static final int FILE_CHOOSER_REQUEST = 101;
+    private static final int MAX_SELECTED_FILES = 16;
+    private static final String PREFS_NAME = "cotton_mobile";
+    private static final String BOOKMARKS_KEY = "bookmarks";
+    private static final String HISTORY_KEY = "history";
+    private static final int MAX_HISTORY_ENTRIES = 200;
+    private static final String UPDATE_NOTICES_KEY = "suppress_update_notices";
+    private static final String UPDATE_CHECK_TIME_KEY = "last_update_check";
+    private static final String RELEASES_URL = "https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/latest";
+    private static final String RELEASES_API = "https://api.github.com/repos/tiaprendizabapa-collab/CottonBrowser";
+    private static final String PROTECTION_EXCEPTIONS_KEY = "protection_exceptions";
+
+    private final List<BrowserTab> tabs = new ArrayList<>();
+    private final List<Bookmark> bookmarks = new ArrayList<>();
+    private final List<HistoryEntry> history = new ArrayList<>();
+    private final Set<String> approvedHttpOrigins = new HashSet<>();
+    private volatile BrowserTab activeTab;
+    private AdBlocker adBlocker;
+    private volatile Set<String> protectionExceptions = Collections.emptySet();
+    private String youtubeProtectionScript = "";
+    private String pageProtectionScript = "";
+    private boolean documentStartSupported;
+    private FrameLayout pageHost;
+    private LinearLayout tabItems;
+    private HorizontalScrollView tabScroller;
+    private EditText omnibox;
+    private TextView backButton;
+    private TextView forwardButton;
+    private TextView reloadButton;
+    private TextView bookmarkButton;
+    private ImageView protectionButton;
+    private ProgressBar progressBar;
+    private HorizontalScrollView bookmarksScroller;
+    private LinearLayout bookmarksRow;
+    private LinearLayout findBar;
+    private EditText findInput;
+    private TextView findCount;
+    private LinearLayout updateCard;
+    private TextView updateMessage;
+    private CheckBox suppressUpdateNotice;
+    private String availableUpdateTag;
+    private ValueCallback<Uri[]> fileChooserCallback;
+    private boolean fileChooserAllowsMultiple;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        getWindow().setStatusBarColor(HEADER);
+        getWindow().setNavigationBarColor(HEADER);
+        WebView.setWebContentsDebuggingEnabled(false);
+        readBookmarks();
+        readHistory();
+        readProtectionExceptions();
+        adBlocker = AdBlocker.load(this);
+        // Service workers can fetch resources outside a tab's WebViewClient.
+        // Register their interceptor before the first WebView is created.
+        ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                if (isProtectionExceptionForServiceWorker(request)) return null;
+                return adBlocker.intercept(request);
+            }
+        });
+        youtubeProtectionScript = readBundledScript("youtube_protection.js");
+        pageProtectionScript = readBundledScript("page_protection.js");
+        documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
+        buildInterface();
+        addTab(null, true);
+        if (adBlocker.getDomainCount() == 0) toast("Lista de bloqueio indisponível nesta instalação");
+        checkForUpdates();
+    }
+
+    private void buildInterface() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BACKGROUND);
+        setContentView(root);
+
+        // Android 15 enforces edge-to-edge for target 35. Keep controls clear of system bars.
+        if (Build.VERSION.SDK_INT >= 35) {
+            root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+                Insets bars = windowInsets.getInsets(WindowInsets.Type.systemBars());
+                root.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                return windowInsets;
+            });
+        }
+
+        LinearLayout tabsRow = new LinearLayout(this);
+        tabsRow.setGravity(Gravity.CENTER_VERTICAL);
+        tabsRow.setBackgroundColor(HEADER);
+        root.addView(tabsRow, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        ImageView brand = new ImageView(this);
+        brand.setImageResource(R.drawable.cotton_icon);
+        brand.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        brand.setContentDescription("CottonBrowser");
+        LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+        brandParams.setMargins(dp(8), 0, dp(4), 0);
+        tabsRow.addView(brand, brandParams);
+        brand.setOnClickListener(view -> showHome());
+
+        tabScroller = new HorizontalScrollView(this);
+        tabScroller.setHorizontalScrollBarEnabled(false);
+        tabScroller.setFillViewport(false);
+        tabsRow.addView(tabScroller, new LinearLayout.LayoutParams(0, -1, 1));
+        tabItems = new LinearLayout(this);
+        tabItems.setGravity(Gravity.CENTER_VERTICAL);
+        tabScroller.addView(tabItems, new HorizontalScrollView.LayoutParams(-2, -1));
+
+        TextView addButton = toolbarButton("+", "Nova guia");
+        tabsRow.addView(addButton, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        addButton.setOnClickListener(view -> addTab(null, true));
+
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setPadding(dp(6), dp(4), dp(6), dp(6));
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setBackgroundColor(HEADER);
+        root.addView(toolbar, new LinearLayout.LayoutParams(-1, dp(56)));
+
+        backButton = toolbarButton("‹", "Voltar");
+        forwardButton = toolbarButton("›", "Avançar");
+        reloadButton = toolbarButton("⟳", "Atualizar");
+        toolbar.addView(backButton, new LinearLayout.LayoutParams(dp(34), dp(42)));
+        toolbar.addView(forwardButton, new LinearLayout.LayoutParams(dp(34), dp(42)));
+        toolbar.addView(reloadButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
+        backButton.setOnClickListener(view -> {
+            if (activeTab != null && activeTab.webView.canGoBack()) activeTab.webView.goBack();
+        });
+        forwardButton.setOnClickListener(view -> {
+            if (activeTab != null && activeTab.webView.canGoForward()) activeTab.webView.goForward();
+        });
+        reloadButton.setOnClickListener(view -> {
+            if (activeTab == null) return;
+            if (activeTab.url == null) focusOmnibox();
+            else if (activeTab.loading) activeTab.webView.stopLoading();
+            else activeTab.webView.reload();
+        });
+
+        LinearLayout addressSurface = new LinearLayout(this);
+        addressSurface.setGravity(Gravity.CENTER_VERTICAL);
+        addressSurface.setBackground(rounded(SURFACE, 22));
+        LinearLayout.LayoutParams addressParams = new LinearLayout.LayoutParams(0, dp(42), 1);
+        addressParams.setMargins(dp(3), 0, dp(3), 0);
+        toolbar.addView(addressSurface, addressParams);
+
+        omnibox = new EditText(this);
+        omnibox.setSingleLine(true);
+        omnibox.setTextSize(13);
+        omnibox.setTextColor(TEXT);
+        omnibox.setHintTextColor(MUTED);
+        omnibox.setHint("Pesquise ou digite um endereço");
+        omnibox.setBackgroundColor(Color.TRANSPARENT);
+        omnibox.setPadding(dp(13), 0, dp(4), 0);
+        omnibox.setSelectAllOnFocus(true);
+        omnibox.setImeOptions(EditorInfo.IME_ACTION_GO);
+        omnibox.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        addressSurface.addView(omnibox, new LinearLayout.LayoutParams(0, -1, 1));
+        omnibox.setOnEditorActionListener((textView, actionId, event) -> {
+            if (actionId != EditorInfo.IME_ACTION_GO && actionId != EditorInfo.IME_ACTION_SEARCH) return false;
+            navigateFromOmnibox();
+            return true;
+        });
+
+        protectionButton = new ImageView(this);
+        protectionButton.setImageResource(R.drawable.ic_shield);
+        protectionButton.setPadding(dp(9), dp(9), dp(9), dp(9));
+        protectionButton.setBackground(rounded(SURFACE, 12));
+        addressSurface.addView(protectionButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        protectionButton.setOnClickListener(view -> showProtectionDialog());
+
+        bookmarkButton = toolbarButton("☆", "Adicionar aos favoritos");
+        addressSurface.addView(bookmarkButton, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        bookmarkButton.setOnClickListener(view -> toggleBookmark());
+
+        TextView menuButton = toolbarButton("⋮", "Mais opções");
+        toolbar.addView(menuButton, new LinearLayout.LayoutParams(dp(38), dp(42)));
+        menuButton.setOnClickListener(this::showMenu);
+
+        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
+        progressBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(HEADER));
+        progressBar.setVisibility(View.INVISIBLE);
+        root.addView(progressBar, new LinearLayout.LayoutParams(-1, dp(2)));
+
+        bookmarksScroller = new HorizontalScrollView(this);
+        bookmarksScroller.setHorizontalScrollBarEnabled(false);
+        bookmarksScroller.setBackgroundColor(HEADER);
+        bookmarksRow = new LinearLayout(this);
+        bookmarksRow.setGravity(Gravity.CENTER_VERTICAL);
+        bookmarksRow.setPadding(dp(8), 0, dp(8), 0);
+        bookmarksScroller.addView(bookmarksRow, new HorizontalScrollView.LayoutParams(-2, -1));
+        root.addView(bookmarksScroller, new LinearLayout.LayoutParams(-1, dp(38)));
+        renderBookmarksBar();
+
+        findBar = new LinearLayout(this);
+        findBar.setGravity(Gravity.CENTER_VERTICAL);
+        findBar.setPadding(dp(8), dp(3), dp(8), dp(3));
+        findBar.setBackgroundColor(HEADER);
+        findBar.setVisibility(View.GONE);
+        findInput = new EditText(this);
+        findInput.setSingleLine(true);
+        findInput.setTextSize(14);
+        findInput.setTextColor(TEXT);
+        findInput.setHintTextColor(MUTED);
+        findInput.setHint("Localizar na página");
+        findInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        findBar.addView(findInput, new LinearLayout.LayoutParams(0, dp(42), 1));
+        findCount = text("", 12, MUTED);
+        findBar.addView(findCount, new LinearLayout.LayoutParams(dp(58), -2));
+        TextView previousMatch = toolbarButton("↑", "Ocorrência anterior");
+        TextView nextMatch = toolbarButton("↓", "Próxima ocorrência");
+        TextView closeFind = toolbarButton("×", "Fechar busca");
+        findBar.addView(previousMatch, new LinearLayout.LayoutParams(dp(34), dp(38)));
+        findBar.addView(nextMatch, new LinearLayout.LayoutParams(dp(34), dp(38)));
+        findBar.addView(closeFind, new LinearLayout.LayoutParams(dp(34), dp(38)));
+        root.addView(findBar, new LinearLayout.LayoutParams(-1, dp(48)));
+        findInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (activeTab == null) return;
+                if (s.length() == 0) {
+                    activeTab.webView.clearMatches();
+                    findCount.setText("");
+                } else activeTab.webView.findAllAsync(s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) { }
+        });
+        findInput.setOnEditorActionListener((view, actionId, event) -> {
+            if (activeTab == null) return false;
+            activeTab.webView.findNext(true);
+            return true;
+        });
+        previousMatch.setOnClickListener(view -> {
+            if (activeTab != null) activeTab.webView.findNext(false);
+        });
+        nextMatch.setOnClickListener(view -> {
+            if (activeTab != null) activeTab.webView.findNext(true);
+        });
+        closeFind.setOnClickListener(view -> hideFindBar());
+
+        pageHost = new FrameLayout(this);
+        pageHost.setBackgroundColor(BACKGROUND);
+        root.addView(pageHost, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        updateCard = new LinearLayout(this);
+        updateCard.setOrientation(LinearLayout.VERTICAL);
+        updateCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        updateCard.setBackground(rounded(SURFACE_ACTIVE, 16));
+        updateCard.setElevation(dp(9));
+        updateCard.setVisibility(View.GONE);
+        TextView updateTitle = text("Atualização disponível", 16, TEXT);
+        updateTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        updateCard.addView(updateTitle);
+        updateMessage = text("", 13, MUTED);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(-1, -2);
+        messageParams.topMargin = dp(6);
+        updateCard.addView(updateMessage, messageParams);
+        suppressUpdateNotice = new CheckBox(this);
+        suppressUpdateNotice.setText("Não mostrar novamente");
+        suppressUpdateNotice.setTextColor(TEXT);
+        suppressUpdateNotice.setTextSize(13);
+        updateCard.addView(suppressUpdateNotice);
+        LinearLayout updateActions = new LinearLayout(this);
+        updateActions.setGravity(Gravity.END);
+        TextView later = text("Depois", 14, TEXT);
+        TextView viewUpdate = text("Ver atualização", 14, ACCENT);
+        later.setPadding(dp(12), dp(8), dp(12), dp(8));
+        viewUpdate.setPadding(dp(12), dp(8), dp(12), dp(8));
+        updateActions.addView(later);
+        updateActions.addView(viewUpdate);
+        updateCard.addView(updateActions);
+        FrameLayout.LayoutParams updateParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        updateParams.setMargins(dp(12), dp(12), dp(12), dp(12));
+        pageHost.addView(updateCard, updateParams);
+        later.setOnClickListener(view -> dismissUpdateNotice());
+        viewUpdate.setOnClickListener(view -> {
+            String tag = availableUpdateTag;
+            dismissUpdateNotice();
+            addTab(tag == null ? RELEASES_URL
+                    : "https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/tag/" + tag, true);
+        });
+    }
+
+    private TextView toolbarButton(String symbol, String description) {
+        TextView button = new TextView(this);
+        button.setText(symbol);
+        button.setTextSize(25);
+        button.setTextColor(TEXT);
+        button.setGravity(Gravity.CENTER);
+        button.setContentDescription(description);
+        button.setBackground(rounded(HEADER, 12));
+        return button;
+    }
+
+    private BrowserTab addTab(String url, boolean activate) {
+        return addTab(url, activate, true);
+    }
+
+    private BrowserTab addTab(String url, boolean activate, boolean focusNewTab) {
+        BrowserTab tab = new BrowserTab();
+        tab.title = "Nova guia";
+        tab.page = new FrameLayout(this);
+        tab.page.setBackgroundColor(BACKGROUND);
+        tab.webView = createWebView(tab);
+        tab.page.addView(tab.webView, new FrameLayout.LayoutParams(-1, -1));
+        tab.webView.setVisibility(View.GONE);
+        tab.home = createHomeView();
+        tab.page.addView(tab.home, new FrameLayout.LayoutParams(-1, -1));
+        tab.error = createErrorView(tab);
+        tab.error.setVisibility(View.GONE);
+        tab.page.addView(tab.error, new FrameLayout.LayoutParams(-1, -1));
+        tab.page.setVisibility(View.GONE);
+        tabs.add(tab);
+        pageHost.addView(tab.page, new FrameLayout.LayoutParams(-1, -1));
+        if (updateCard.getVisibility() == View.VISIBLE) updateCard.bringToFront();
+        if (activate) selectTab(tab);
+        else renderTabs();
+        if (url != null) navigate(tab, url);
+        else if (activate && focusNewTab) focusOmnibox();
+        return tab;
+    }
+
+    private WebView createWebView(BrowserTab tab) {
+        WebView webView = new WebView(this);
+        webView.setBackgroundColor(Color.WHITE);
+        webView.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES);
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true); // Required by modern sites; no native JavaScript bridge is exposed.
+        settings.setDomStorageEnabled(true);
+        settings.setSupportMultipleWindows(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setSafeBrowsingEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setSupportZoom(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
+        installProtectionScripts(tab, webView);
+        webView.setFindListener((activeMatch, totalMatches, finished) -> {
+            if (tab == activeTab && findBar.getVisibility() == View.VISIBLE)
+                findCount.setText(totalMatches == 0 ? "0" : (activeMatch + 1) + "/" + totalMatches);
+        });
+        webView.setWebViewClient(new BrowserClient(tab));
+        webView.setWebChromeClient(new BrowserChrome(tab));
+        webView.setDownloadListener(downloadListener());
+        webView.setOnLongClickListener(view -> {
+            WebView.HitTestResult hit = webView.getHitTestResult();
+            if (hit == null || !isWebUrl(hit.getExtra())) return false;
+            String link = hit.getExtra();
+            new AlertDialog.Builder(this)
+                    .setItems(new String[]{"Abrir em nova guia", "Copiar endereço"}, (dialog, choice) -> {
+                        if (choice == 0) addTab(link, true);
+                        else {
+                            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Endereço", link));
+                            toast("Endereço copiado");
+                        }
+                    }).show();
+            return true;
+        });
+        return webView;
+    }
+
+    private View createHomeView() {
+        LinearLayout home = new LinearLayout(this);
+        home.setOrientation(LinearLayout.VERTICAL);
+        home.setGravity(Gravity.CENTER);
+        home.setPadding(dp(24), dp(24), dp(24), dp(24));
+        home.setBackgroundColor(BACKGROUND);
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.cotton_icon);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        home.addView(logo, new LinearLayout.LayoutParams(dp(70), dp(70)));
+        TextView title = text("CottonBrowser", 27, TEXT);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-2, -2);
+        titleParams.topMargin = dp(15);
+        home.addView(title, titleParams);
+        TextView subtitle = text("Navegue do seu jeito", 14, MUTED);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-2, -2);
+        subtitleParams.topMargin = dp(5);
+        home.addView(subtitle, subtitleParams);
+        TextView search = text("Pesquisar ou digitar endereço  ↗", 14, TEXT);
+        search.setGravity(Gravity.CENTER_VERTICAL);
+        search.setPadding(dp(18), 0, dp(18), 0);
+        search.setBackground(rounded(SURFACE, 18));
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(-1, dp(52));
+        searchParams.topMargin = dp(30);
+        home.addView(search, searchParams);
+        search.setOnClickListener(view -> focusOmnibox());
+        return home;
+    }
+
+    private View createErrorView(BrowserTab tab) {
+        LinearLayout error = new LinearLayout(this);
+        error.setOrientation(LinearLayout.VERTICAL);
+        error.setGravity(Gravity.CENTER);
+        error.setPadding(dp(32), dp(24), dp(32), dp(24));
+        error.setBackgroundColor(BACKGROUND);
+        TextView icon = text("⚠", 38, ACCENT);
+        error.addView(icon);
+        TextView title = text("Não foi possível abrir esta página", 19, TEXT);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-1, -2);
+        titleParams.topMargin = dp(12);
+        error.addView(title, titleParams);
+        TextView details = text("Verifique sua conexão e tente novamente.", 13, MUTED);
+        details.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams detailParams = new LinearLayout.LayoutParams(-1, -2);
+        detailParams.topMargin = dp(8);
+        error.addView(details, detailParams);
+        tab.errorDetails = details;
+        TextView retry = text("Tentar novamente", 14, TEXT);
+        retry.setGravity(Gravity.CENTER);
+        retry.setBackground(rounded(SURFACE_ACTIVE, 15));
+        LinearLayout.LayoutParams retryParams = new LinearLayout.LayoutParams(dp(175), dp(46));
+        retryParams.topMargin = dp(24);
+        error.addView(retry, retryParams);
+        retry.setOnClickListener(view -> {
+            if (tab.url != null) navigate(tab, tab.url);
+        });
+        return error;
+    }
+
+    private void selectTab(BrowserTab tab) {
+        if (activeTab == tab) return;
+        if (activeTab != null) {
+            hideFindBar();
+            activeTab.webView.onPause();
+            activeTab.page.setVisibility(View.GONE);
+        }
+        activeTab = tab;
+        tab.page.setVisibility(View.VISIBLE);
+        tab.webView.onResume();
+        renderTabs();
+        updateControls();
+    }
+
+    private void closeTab(BrowserTab tab) {
+        int index = tabs.indexOf(tab);
+        if (index < 0) return;
+        boolean wasActive = activeTab == tab;
+        if (wasActive) hideFindBar();
+        tabs.remove(index);
+        if (wasActive) activeTab = null;
+        pageHost.removeView(tab.page);
+        tab.webView.stopLoading();
+        if (tab.protectionScriptHandler != null) tab.protectionScriptHandler.remove();
+        tab.webView.setWebChromeClient(null);
+        tab.webView.setWebViewClient(null);
+        tab.webView.destroy();
+        if (tabs.isEmpty()) addTab(null, true);
+        else if (wasActive) selectTab(tabs.get(Math.min(index, tabs.size() - 1)));
+        else renderTabs();
+    }
+
+    private void renderTabs() {
+        tabItems.removeAllViews();
+        for (BrowserTab tab : tabs) {
+            LinearLayout chip = new LinearLayout(this);
+            chip.setGravity(Gravity.CENTER_VERTICAL);
+            chip.setBackground(rounded(tab == activeTab ? SURFACE_ACTIVE : SURFACE, 13));
+            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(dp(178), dp(38));
+            chipParams.setMargins(dp(3), 0, dp(3), 0);
+            tabItems.addView(chip, chipParams);
+            if (tab.favicon != null) {
+                ImageView favicon = new ImageView(this);
+                favicon.setImageBitmap(tab.favicon);
+                LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(17), dp(17));
+                iconParams.setMargins(dp(9), 0, dp(5), 0);
+                chip.addView(favicon, iconParams);
+            }
+            TextView label = text(tab.title, 12, TEXT);
+            label.setSingleLine(true);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            if (tab.favicon == null) label.setPadding(dp(11), 0, 0, 0);
+            chip.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
+            label.setOnClickListener(view -> selectTab(tab));
+            chip.setOnClickListener(view -> selectTab(tab));
+            TextView close = text("×", 20, MUTED);
+            close.setGravity(Gravity.CENTER);
+            close.setContentDescription("Fechar " + tab.title);
+            chip.addView(close, new LinearLayout.LayoutParams(dp(32), -1));
+            close.setOnClickListener(view -> closeTab(tab));
+        }
+    }
+
+    private void navigateFromOmnibox() {
+        if (activeTab == null) return;
+        String input = omnibox.getText().toString().trim();
+        if (input.isEmpty()) return;
+        String url = resolveInput(input);
+        if (url == null) {
+            toast("Apenas endereços HTTP e HTTPS podem ser abertos aqui");
+            return;
+        }
+        navigate(activeTab, url);
+        omnibox.clearFocus();
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        keyboard.hideSoftInputFromWindow(omnibox.getWindowToken(), 0);
+    }
+
+    private String resolveInput(String input) {
+        String lower = input.toLowerCase(Locale.ROOT);
+        if (lower.equals("localhost") || lower.startsWith("localhost:") || lower.startsWith("localhost/")
+                || lower.equals("127.0.0.1") || lower.startsWith("127.0.0.1:") || lower.startsWith("127.0.0.1/")) {
+            String localUrl = "http://" + input;
+            return isWebUrl(localUrl) ? localUrl : null;
+        }
+        if (input.matches("(?i)^[a-z][a-z0-9+.-]*:.*")) {
+            return isWebUrl(input) ? input : null;
+        }
+        boolean address = !input.contains(" ") && (input.contains(".") || input.equalsIgnoreCase("localhost") || input.startsWith("localhost:"));
+        if (address) {
+            String url = "https://" + input;
+            return isWebUrl(url) ? url : null;
+        }
+        try {
+            return "https://www.google.com/search?q=" + URLEncoder.encode(input, "UTF-8");
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void navigate(BrowserTab tab, String url) {
+        if (!isWebUrl(url)) return;
+        tab.popupPending = false;
+        tab.popupSourceUrl = null;
+        tab.navigationToken++;
+        if (warnBeforeHttp(tab, url, () -> navigate(tab, url))) return;
+        tab.url = url;
+        tab.error.setVisibility(View.GONE);
+        tab.home.setVisibility(View.GONE);
+        tab.webView.setVisibility(View.VISIBLE);
+        tab.webView.loadUrl(url);
+        if (tab == activeTab) updateControls();
+    }
+
+    private boolean warnBeforeHttp(BrowserTab tab, String url, Runnable continueNavigation) {
+        Uri uri = Uri.parse(url);
+        if (!"http".equalsIgnoreCase(uri.getScheme())) return false;
+        String origin = uri.getHost() + ":" + uri.getPort();
+        if (approvedHttpOrigins.contains(origin)) return false;
+        int token = tab.navigationToken;
+        new AlertDialog.Builder(this)
+                .setTitle("Conexão não segura")
+                .setMessage(uri.getHost() + " usa HTTP sem criptografia. Dados enviados à página podem ser interceptados. Deseja continuar nesta sessão?")
+                .setPositiveButton("Continuar", (dialog, button) -> {
+                    if (!tabs.contains(tab) || token != tab.navigationToken) return;
+                    approvedHttpOrigins.add(origin);
+                    continueNavigation.run();
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
+        return true;
+    }
+
+    private void showHome() {
+        addTab(null, true);
+    }
+
+    private void focusOmnibox() {
+        omnibox.requestFocus();
+        omnibox.selectAll();
+        omnibox.post(() -> {
+            InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            keyboard.showSoftInput(omnibox, InputMethodManager.SHOW_IMPLICIT);
+        });
+    }
+
+    private void updateControls() {
+        if (activeTab == null) return;
+        if (!omnibox.hasFocus()) omnibox.setText(activeTab.url == null ? "" : activeTab.url);
+        backButton.setTextColor(activeTab.webView.canGoBack() ? TEXT : MUTED);
+        forwardButton.setTextColor(activeTab.webView.canGoForward() ? TEXT : MUTED);
+        reloadButton.setText(activeTab.loading ? "×" : "⟳");
+        progressBar.setVisibility(activeTab.loading ? View.VISIBLE : View.INVISIBLE);
+        progressBar.setProgress(activeTab.progress);
+        boolean saved = activeTab.url != null && findBookmark(activeTab.url) >= 0;
+        bookmarkButton.setText(saved ? "★" : "☆");
+        bookmarkButton.setTextColor(saved ? ACCENT : TEXT);
+        bookmarkButton.setContentDescription(saved ? "Remover dos favoritos" : "Adicionar aos favoritos");
+        boolean protectedSite = adBlocker.getDomainCount() > 0
+                && !isProtectionDisabledForUrl(activeTab.url);
+        protectionButton.setImageTintList(android.content.res.ColorStateList.valueOf(
+                protectedSite ? ACCENT : MUTED));
+        protectionButton.setContentDescription(adBlocker.getDomainCount() == 0
+                ? "Proteção indisponível"
+                : protectedSite
+                    ? "Proteção ativa neste site"
+                    : "Proteção desativada neste site");
+    }
+
+    private void showFindBar() {
+        if (activeTab == null || activeTab.url == null) {
+            toast("Abra uma página para localizar texto");
+            return;
+        }
+        findBar.setVisibility(View.VISIBLE);
+        findInput.requestFocus();
+        findInput.selectAll();
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        keyboard.showSoftInput(findInput, InputMethodManager.SHOW_IMPLICIT);
+    }
+
+    private void hideFindBar() {
+        if (findBar == null || findBar.getVisibility() == View.GONE) return;
+        if (activeTab != null) activeTab.webView.clearMatches();
+        findBar.setVisibility(View.GONE);
+        findInput.setText("");
+        findInput.clearFocus();
+        findCount.setText("");
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        keyboard.hideSoftInputFromWindow(findInput.getWindowToken(), 0);
+    }
+
+    private void renderBookmarksBar() {
+        if (bookmarksRow == null) return;
+        bookmarksRow.removeAllViews();
+        bookmarksScroller.setVisibility(bookmarks.isEmpty() ? View.GONE : View.VISIBLE);
+        for (Bookmark bookmark : bookmarks) {
+            String label = bookmark.title.length() > 22
+                    ? bookmark.title.substring(0, 21) + "…" : bookmark.title;
+            TextView chip = text("★  " + label, 12, TEXT);
+            chip.setSingleLine(true);
+            chip.setGravity(Gravity.CENTER_VERTICAL);
+            chip.setPadding(dp(11), 0, dp(11), 0);
+            chip.setBackground(rounded(SURFACE, 12));
+            chip.setContentDescription("Abrir favorito " + bookmark.title);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(30));
+            params.setMargins(dp(3), 0, dp(3), 0);
+            bookmarksRow.addView(chip, params);
+            chip.setOnClickListener(view -> {
+                if (activeTab != null) navigate(activeTab, bookmark.url);
+            });
+            chip.setOnLongClickListener(view -> { showRemoveBookmarks(); return true; });
+        }
+    }
+
+    private void showMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(0, 1, 0, "Nova guia");
+        menu.getMenu().add(0, 2, 1, "Favoritos");
+        menu.getMenu().add(0, 3, 2, "Adicionar aos favoritos");
+        menu.getMenu().add(0, 6, 3, "Histórico recente");
+        menu.getMenu().add(0, 7, 4, "Downloads");
+        menu.getMenu().add(0, 8, 5, "Localizar na página");
+        menu.getMenu().add(0, 9, 6, "Compartilhar página");
+        menu.getMenu().add(0, 10, 7, "Baixar mídia direta da página");
+        menu.getMenu().add(0, 4, 8, "Página inicial");
+        menu.getMenu().add(0, 5, 9, "Proteção deste site");
+        menu.getMenu().add(0, 11, 10, "Ver atualizações");
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1: addTab(null, true); return true;
+                case 2: showBookmarks(); return true;
+                case 3: toggleBookmark(); return true;
+                case 4: showHome(); return true;
+                case 5: showProtectionDialog(); return true;
+                case 6: showHistory(); return true;
+                case 7: showDownloads(); return true;
+                case 8: showFindBar(); return true;
+                case 9: sharePage(); return true;
+                case 10: downloadPageMedia(); return true;
+                case 11: addTab(RELEASES_URL, true); return true;
+                default: return false;
+            }
+        });
+        menu.show();
+    }
+
+    private void checkForUpdates() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String installedCommit = getString(R.string.source_commit);
+        if (prefs.getBoolean(UPDATE_NOTICES_KEY, false) || !installedCommit.matches("[0-9a-fA-F]{40}"))
+            return;
+        if (System.currentTimeMillis() - prefs.getLong(UPDATE_CHECK_TIME_KEY, 0) < 6 * 60 * 60 * 1000L)
+            return;
+
+        new Thread(() -> {
+            try {
+                JSONObject release = fetchReleaseJson("/releases/latest");
+                String tag = release.getString("tag_name");
+                if (!tag.matches("v[0-9]+\\.[0-9]+\\.[0-9]+")) return;
+                JSONArray assets = release.getJSONArray("assets");
+                boolean hasMobileApk = false;
+                for (int i = 0; i < assets.length(); i++) {
+                    if ("CottonBrowser-Android-preview.apk".equals(assets.getJSONObject(i).optString("name"))) {
+                        hasMobileApk = true;
+                        break;
+                    }
+                }
+                if (!hasMobileApk) return;
+                JSONObject reference = fetchReleaseJson("/git/ref/tags/" + tag);
+                JSONObject object = reference.getJSONObject("object");
+                if (!"commit".equals(object.optString("type"))) return;
+                String latestCommit = object.getString("sha");
+                prefs.edit().putLong(UPDATE_CHECK_TIME_KEY, System.currentTimeMillis()).apply();
+                if (!latestCommit.equalsIgnoreCase(installedCommit))
+                    runOnUiThread(() -> showUpdateNotice(tag));
+            } catch (Exception ignored) {
+                // Offline or rate-limited devices can check manually from the menu.
+            }
+        }, "CottonBrowser-update-check").start();
+    }
+
+    private static JSONObject fetchReleaseJson(String endpoint) throws IOException, JSONException {
+        HttpsURLConnection connection = (HttpsURLConnection) new URL(RELEASES_API + endpoint).openConnection();
+        connection.setConnectTimeout(4000);
+        connection.setReadTimeout(4000);
+        connection.setInstanceFollowRedirects(false);
+        connection.setRequestProperty("Accept", "application/vnd.github+json");
+        connection.setRequestProperty("User-Agent", "CottonBrowser-Android");
+        try {
+            if (connection.getResponseCode() != 200) throw new IOException("GitHub indisponível");
+            StringBuilder body = new StringBuilder();
+            try (InputStreamReader reader = new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)) {
+                char[] chunk = new char[2048];
+                int read;
+                while ((read = reader.read(chunk)) > 0) {
+                    body.append(chunk, 0, read);
+                    if (body.length() > 65536) throw new IOException("Resposta de atualização muito grande");
+                }
+            }
+            return new JSONObject(body.toString());
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private void showUpdateNotice(String tag) {
+        if (isFinishing() || isDestroyed() ||
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(UPDATE_NOTICES_KEY, false)) return;
+        availableUpdateTag = tag;
+        updateMessage.setText("CottonBrowser " + tag + " está disponível para Android.");
+        suppressUpdateNotice.setChecked(false);
+        updateCard.setVisibility(View.VISIBLE);
+        updateCard.bringToFront();
+    }
+
+    private void dismissUpdateNotice() {
+        if (suppressUpdateNotice.isChecked())
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(UPDATE_NOTICES_KEY, true).apply();
+        updateCard.setVisibility(View.GONE);
+    }
+
+    private void readProtectionExceptions() {
+        try {
+            Set<String> saved = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getStringSet(PROTECTION_EXCEPTIONS_KEY, Collections.emptySet());
+            protectionExceptions = Collections.unmodifiableSet(new HashSet<>(saved));
+        } catch (RuntimeException ignored) {
+            protectionExceptions = Collections.emptySet();
+        }
+    }
+
+    private static String hostFromUrl(String url) {
+        if (!isWebUrl(url)) return null;
+        String host = Uri.parse(url).getHost();
+        return host == null ? null : host.toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean isYouTubeUrl(String url) {
+        String host = hostFromUrl(url);
+        return host != null && (host.equals("youtube.com") || host.endsWith(".youtube.com"));
+    }
+
+    private String readBundledScript(String name) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                getAssets().open(name), StandardCharsets.UTF_8))) {
+            StringBuilder script = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) script.append(line).append('\n');
+            return script.toString();
+        } catch (IOException ignored) {
+            return "";
+        }
+    }
+
+    private void installProtectionScripts(BrowserTab tab, WebView webView) {
+        if (tab.protectionScriptHandler != null) {
+            tab.protectionScriptHandler.remove();
+            tab.protectionScriptHandler = null;
+        }
+        tab.documentStartInstalled = false;
+        if (!documentStartSupported) return;
+        try {
+            tab.protectionScriptHandler = WebViewCompat.addDocumentStartJavaScript(webView,
+                    protectionScript(), Collections.singleton("*"));
+            tab.documentStartInstalled = true;
+        } catch (RuntimeException ignored) {
+            // Installation can fail in one WebView without disabling early scripts in other tabs.
+        }
+    }
+
+    private String protectionScript() {
+        // Also honor a disabled parent site in subframes when its origin/referrer is available.
+        StringBuilder script = new StringBuilder("(function(){if(!/^https?:$/.test(location.protocol))return;const disabled=[");
+        boolean first = true;
+        for (String host : protectionExceptions) {
+            if (!first) script.append(',');
+            script.append(JSONObject.quote(host));
+            first = false;
+        }
+        script.append("];if(disabled.indexOf(location.hostname.toLowerCase())!==-1)return;")
+                .append("try{if(disabled.indexOf(top.location.hostname.toLowerCase())!==-1)return;}catch(_){}")
+                .append("try{if(top!==window&&document.referrer&&disabled.indexOf(new URL(document.referrer).hostname.toLowerCase())!==-1)return;}catch(_){}")
+                .append(pageProtectionScript).append('\n').append(youtubeProtectionScript).append("})();");
+        return script.toString();
+    }
+
+    private void ensureProtectionScripts(WebView webView, String url) {
+        if (!isWebUrl(url) || isProtectionDisabledForUrl(url)) return;
+        // Idempotent fallback also repairs a missed document-start delivery. Legacy providers
+        // still cannot alter player responses that were consumed before the page committed.
+        webView.evaluateJavascript(protectionScript(), null);
+    }
+
+    private boolean isProtectionDisabledForUrl(String url) {
+        String host = hostFromUrl(url);
+        return host != null && protectionExceptions.contains(host);
+    }
+
+    private boolean isProtectionExceptionForServiceWorker(WebResourceRequest request) {
+        Map<String, String> headers = request.getRequestHeaders();
+        if (headers == null) return false;
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            String name = header.getKey();
+            if (name != null && (name.equalsIgnoreCase("Referer") || name.equalsIgnoreCase("Origin"))
+                    && isProtectionDisabledForUrl(header.getValue())) return true;
+        }
+        return false;
+    }
+
+    private void showProtectionDialog() {
+        if (adBlocker.getDomainCount() == 0) {
+            new AlertDialog.Builder(this).setTitle("Proteção indisponível")
+                    .setMessage("A lista de bloqueio não pôde ser carregada nesta instalação.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        if (activeTab == null || !isWebUrl(activeTab.url)) {
+            toast("Abra um site para configurar a proteção");
+            return;
+        }
+        BrowserTab tab = activeTab;
+        String host = hostFromUrl(tab.url);
+        boolean enabled = !protectionExceptions.contains(host);
+        String message = host + "\n\nRequisições bloqueadas nesta guia: "
+                + tab.blockedCount.get() + ". Solicitações em segundo plano não entram nessa contagem."
+                + "\nDomínios na lista local: " + adBlocker.getDomainCount() + "."
+                + "\nEspaços de anúncios ocultados não entram na contagem de requisições."
+                + (isYouTubeUrl(tab.url) && !tab.documentStartInstalled
+                    ? "\nPara a proteção antecipada do YouTube, atualize o Android System WebView no aparelho." : "")
+                + (enabled ? "\n\nSe o site não funcionar, desative a proteção apenas para ele."
+                : "\n\nA proteção está desativada neste site.");
+        new AlertDialog.Builder(this)
+                .setTitle("Proteção contra anúncios")
+                .setMessage(message)
+                .setPositiveButton(enabled ? "Desativar neste site" : "Ativar neste site", (dialog, which) -> {
+                    Set<String> changed = new HashSet<>(protectionExceptions);
+                    if (enabled) changed.add(host);
+                    else changed.remove(host);
+                    protectionExceptions = Collections.unmodifiableSet(changed);
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putStringSet(PROTECTION_EXCEPTIONS_KEY, changed).apply();
+                    for (BrowserTab candidate : tabs) {
+                        installProtectionScripts(candidate, candidate.webView);
+                    }
+                    tab.webView.reload();
+                    if (tab == activeTab) updateControls();
+                })
+                .setNegativeButton("Fechar", null)
+                .show();
+    }
+
+    private void toggleBookmark() {
+        if (activeTab == null || !isWebUrl(activeTab.url)) {
+            toast("Abra um site para adicioná-lo aos favoritos");
+            return;
+        }
+        int index = findBookmark(activeTab.url);
+        if (index >= 0) {
+            bookmarks.remove(index);
+            toast("Removido dos favoritos");
+        } else {
+            bookmarks.add(new Bookmark(activeTab.url, activeTab.title));
+            toast("Adicionado aos favoritos");
+        }
+        writeBookmarks();
+        updateControls();
+    }
+
+    private void showBookmarks() {
+        if (bookmarks.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Favoritos")
+                    .setMessage("Seus sites favoritos aparecerão aqui.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        String[] labels = new String[bookmarks.size()];
+        for (int i = 0; i < bookmarks.size(); i++) labels[i] = bookmarks.get(i).title;
+        new AlertDialog.Builder(this).setTitle("Favoritos")
+                .setItems(labels, (dialog, index) -> navigate(activeTab, bookmarks.get(index).url))
+                .setNeutralButton("Excluir favorito", (dialog, which) -> showRemoveBookmarks())
+                .setNegativeButton("Fechar", null).show();
+    }
+
+    private void showRemoveBookmarks() {
+        String[] labels = new String[bookmarks.size()];
+        for (int i = 0; i < bookmarks.size(); i++) labels[i] = bookmarks.get(i).title;
+        new AlertDialog.Builder(this).setTitle("Excluir favorito")
+                .setItems(labels, (dialog, index) -> {
+                    bookmarks.remove(index);
+                    writeBookmarks();
+                    updateControls();
+                    toast("Favorito excluído");
+                }).setNegativeButton("Cancelar", null).show();
+    }
+
+    private void readBookmarks() {
+        bookmarks.clear();
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        try {
+            JSONArray array = new JSONArray(prefs.getString(BOOKMARKS_KEY, "[]"));
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.getJSONObject(i);
+                String url = item.optString("url");
+                if (isWebUrl(url)) bookmarks.add(new Bookmark(url, item.optString("title", url)));
+            }
+        } catch (JSONException ignored) {
+            // Corrupted local preferences should not prevent the browser from starting.
+        }
+    }
+
+    private void writeBookmarks() {
+        JSONArray array = new JSONArray();
+        for (Bookmark bookmark : bookmarks) {
+            JSONObject item = new JSONObject();
+            try {
+                item.put("url", bookmark.url);
+                item.put("title", bookmark.title);
+                array.put(item);
+            } catch (JSONException ignored) { }
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(BOOKMARKS_KEY, array.toString()).apply();
+        renderBookmarksBar();
+    }
+
+    private void readHistory() {
+        history.clear();
+        try {
+            JSONArray array = new JSONArray(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getString(HISTORY_KEY, "[]"));
+            for (int i = 0; i < array.length() && history.size() < MAX_HISTORY_ENTRIES; i++) {
+                JSONObject item = array.getJSONObject(i);
+                String url = item.optString("url");
+                if (isWebUrl(url)) history.add(new HistoryEntry(url, item.optString("title", url)));
+            }
+        } catch (JSONException ignored) {
+            // An invalid local record does not block the browser.
+        }
+    }
+
+    private void recordHistory(String url, String title) {
+        if (!isWebUrl(url)) return;
+        if (!history.isEmpty() && history.get(0).url.equals(url)) {
+            history.set(0, new HistoryEntry(url, title));
+        } else {
+            history.add(0, new HistoryEntry(url, title));
+            while (history.size() > MAX_HISTORY_ENTRIES) history.remove(history.size() - 1);
+        }
+        JSONArray array = new JSONArray();
+        for (HistoryEntry entry : history) {
+            try {
+                JSONObject item = new JSONObject();
+                item.put("url", entry.url);
+                item.put("title", entry.title);
+                array.put(item);
+            } catch (JSONException ignored) { }
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(HISTORY_KEY, array.toString()).apply();
+    }
+
+    private void showHistory() {
+        if (history.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Histórico")
+                    .setMessage("As páginas visitadas aparecerão aqui.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        int count = Math.min(50, history.size());
+        String[] labels = new String[count];
+        for (int i = 0; i < count; i++) {
+            HistoryEntry entry = history.get(i);
+            labels[i] = entry.title + "\n" + Uri.parse(entry.url).getHost();
+        }
+        new AlertDialog.Builder(this).setTitle("Histórico recente")
+                .setItems(labels, (dialog, index) -> {
+                    if (activeTab != null) navigate(activeTab, history.get(index).url);
+                })
+                .setNeutralButton("Limpar", (dialog, which) -> new AlertDialog.Builder(this)
+                        .setTitle("Limpar histórico?")
+                        .setMessage("As páginas salvas no histórico deste aparelho serão removidas.")
+                        .setPositiveButton("Limpar", (confirm, button) -> {
+                            history.clear();
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                                    .remove(HISTORY_KEY).apply();
+                            for (BrowserTab tab : tabs) tab.webView.clearHistory();
+                        })
+                        .setNegativeButton("Cancelar", null).show())
+                .setNegativeButton("Fechar", null).show();
+    }
+
+    private void showDownloads() {
+        try {
+            startActivity(new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS));
+        } catch (RuntimeException error) {
+            toast("O gerenciador de downloads não está disponível");
+        }
+    }
+
+    private void sharePage() {
+        if (activeTab == null || !isWebUrl(activeTab.url)) {
+            toast("Abra uma página para compartilhar");
+            return;
+        }
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_TEXT, activeTab.url);
+        startActivity(Intent.createChooser(share, "Compartilhar página"));
+    }
+
+    private void downloadPageMedia() {
+        BrowserTab tab = activeTab;
+        if (tab == null || !isWebUrl(tab.url)) {
+            toast("Abra uma página com vídeo ou áudio");
+            return;
+        }
+        // Only a direct HTTP(S) media URL can be handed to Android's DownloadManager.
+        // Blob, DRM and segmented streams require a separate download implementation.
+        tab.webView.evaluateJavascript("(function(){var e=document.querySelector('video,audio');return e?(e.currentSrc||e.src||''):''})()", result -> {
+            if (tab != activeTab) return;
+            String url;
+            try { url = new JSONArray("[" + result + "]").getString(0); }
+            catch (JSONException error) { url = null; }
+            if (!isWebUrl(url)) {
+                toast("Esta página não oferece um arquivo de mídia direto para baixar");
+                return;
+            }
+            String path = Uri.parse(url).getPath();
+            if (path != null && (path.endsWith(".m3u8") || path.endsWith(".mpd"))) {
+                toast("Streams segmentados não são compatíveis com o download direto");
+                return;
+            }
+            downloadListener().onDownloadStart(url, tab.webView.getSettings().getUserAgentString(),
+                    null, null, -1);
+        });
+    }
+
+    private int findBookmark(String url) {
+        for (int i = 0; i < bookmarks.size(); i++) {
+            if (bookmarks.get(i).url.equals(url)) return i;
+        }
+        return -1;
+    }
+
+    private DownloadListener downloadListener() {
+        return (url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            if (!isWebUrl(url)) {
+                toast("Este tipo de download não é compatível");
+                return;
+            }
+            try {
+                String suggested = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                String safeName = new File(suggested).getName().replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+                if (safeName.length() > 120) safeName = safeName.substring(safeName.length() - 120);
+                if (safeName.isEmpty()) safeName = "download";
+                // A unique destination avoids overwriting a prior download with the same name.
+                int dot = safeName.lastIndexOf('.');
+                String stem = dot > 0 ? safeName.substring(0, dot) : safeName;
+                String extension = dot > 0 ? safeName.substring(dot) : "";
+                String filename = stem + "-" + System.currentTimeMillis() + extension;
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                request.setTitle(safeName);
+                request.setDescription("Baixando pelo CottonBrowser");
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                if (mimeType != null && !mimeType.isEmpty()) request.setMimeType(mimeType);
+                if (userAgent != null) request.addRequestHeader("User-Agent", userAgent);
+                String cookies = CookieManager.getInstance().getCookie(url);
+                if (cookies != null && !cookies.isEmpty()) request.addRequestHeader("Cookie", cookies);
+                if (Build.VERSION.SDK_INT >= 29) {
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+                } else {
+                    // App-specific Downloads needs no broad storage permission on Android 8/9.
+                    request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, filename);
+                }
+                DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                manager.enqueue(request);
+                toast("Download iniciado");
+            } catch (Exception error) {
+                toast("Não foi possível iniciar o download");
+            }
+        };
+    }
+
+    private boolean openExternal(String url) {
+        Uri uri = Uri.parse(url);
+        String scheme = uri.getScheme();
+        if (scheme == null) return false;
+        switch (scheme.toLowerCase(Locale.ROOT)) {
+            case "mailto":
+            case "tel":
+            case "sms":
+            case "geo":
+            case "market":
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                    intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                    startActivity(intent);
+                    return true;
+                } catch (Exception ignored) {
+                    toast("Nenhum aplicativo pode abrir este link");
+                    return false;
+                }
+            default:
+                toast("Este tipo de link foi bloqueado");
+                return false;
+        }
+    }
+
+    private static boolean isWebUrl(String url) {
+        if (url == null) return false;
+        Uri uri = Uri.parse(url);
+        String scheme = uri.getScheme();
+        return ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+                && uri.getHost() != null && !uri.getHost().isEmpty();
+    }
+
+    private void showError(BrowserTab tab, String details) {
+        tab.loading = false;
+        tab.errorDetails.setText(details);
+        tab.error.setVisibility(View.VISIBLE);
+        tab.home.setVisibility(View.GONE);
+        tab.webView.setVisibility(View.GONE);
+        if (tab == activeTab) updateControls();
+    }
+
+    private final class BrowserClient extends WebViewClient {
+        private final BrowserTab tab;
+
+        BrowserClient(BrowserTab tab) { this.tab = tab; }
+
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            String origin = tab.popupPending ? tab.popupSourceUrl : tab.url;
+            if (isProtectionDisabledForUrl(origin)) return null;
+            WebResourceResponse blocked = adBlocker.intercept(request, origin, tab.popupPending);
+            if (blocked != null) tab.blockedCount.incrementAndGet();
+            if (blocked != null && request.isForMainFrame()) {
+                view.post(() -> {
+                    if (tabs.contains(tab)) closeTab(tab);
+                    toast("Popup de anúncio bloqueado");
+                });
+            }
+            return blocked;
+        }
+
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            if (!request.isForMainFrame()) return false;
+            String url = request.getUrl().toString();
+            if (isWebUrl(url)) {
+                if (tab.popupPending && !isProtectionDisabledForUrl(tab.popupSourceUrl)
+                        && adBlocker.isEnabled() && adBlocker.matches(request.getUrl(), tab.popupSourceUrl)) {
+                    closeTab(tab);
+                    toast("Popup de anúncio bloqueado");
+                    return true;
+                }
+                tab.navigationToken++;
+                return warnBeforeHttp(tab, url, () -> view.loadUrl(url));
+            }
+            if ("about:blank".equals(url)) return false;
+            openExternal(url);
+            return true;
+        }
+
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            if (!tabs.contains(tab)) return;
+            if (tab == activeTab) hideFindBar();
+            tab.loading = true;
+            tab.progress = 5;
+            tab.blockedCount.set(0);
+            if (isWebUrl(url)) {
+                tab.url = url;
+                tab.title = Uri.parse(url).getHost();
+                renderTabs();
+            }
+            tab.error.setVisibility(View.GONE);
+            tab.home.setVisibility(View.GONE);
+            tab.webView.setVisibility(View.VISIBLE);
+            if (tab == activeTab) updateControls();
+        }
+
+        @Override
+        public void onPageCommitVisible(WebView view, String url) {
+            if (isWebUrl(url)) {
+                tab.popupPending = false;
+                tab.popupSourceUrl = null;
+            }
+            ensureProtectionScripts(view, url);
+        }
+
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            if (!tabs.contains(tab)) return;
+            tab.loading = false;
+            tab.progress = 100;
+            if (isWebUrl(url)) tab.url = url;
+            if (tab.error.getVisibility() != View.VISIBLE)
+                recordHistory(url, tab.title);
+            ensureProtectionScripts(view, url);
+            if (tab == activeTab) updateControls();
+        }
+
+        @Override
+        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+            if (request.isForMainFrame()) showError(tab, error.getDescription().toString());
+        }
+
+        @Override
+        public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+            // Leave site-provided 4xx/5xx pages visible; only network and TLS failures get an overlay.
+        }
+
+        @Override
+        public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+            handler.cancel();
+            showError(tab, "A conexão não é segura. A página foi bloqueada.");
+        }
+
+    }
+
+    private final class BrowserChrome extends WebChromeClient {
+        private final BrowserTab tab;
+
+        BrowserChrome(BrowserTab tab) { this.tab = tab; }
+
+        @Override
+        public void onProgressChanged(WebView view, int progress) {
+            if (!tabs.contains(tab)) return;
+            tab.progress = progress;
+            if (tab == activeTab) updateControls();
+        }
+
+        @Override
+        public void onReceivedTitle(WebView view, String title) {
+            if (!tabs.contains(tab)) return;
+            if (title != null && !title.isEmpty() && !"about:blank".equals(title)) {
+                tab.title = title;
+                renderTabs();
+            }
+        }
+
+        @Override
+        public void onReceivedIcon(WebView view, Bitmap icon) {
+            if (!tabs.contains(tab)) return;
+            tab.favicon = icon;
+            renderTabs();
+        }
+
+        @Override
+        public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            // Target=_blank and user-triggered window.open() are regular, isolated tabs in the same profile.
+            if (!isUserGesture || isDialog || resultMsg == null) return false;
+            BrowserTab newTab = addTab(null, true, false);
+            newTab.popupSourceUrl = tab.url;
+            newTab.popupPending = true;
+            WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+            transport.setWebView(newTab.webView);
+            resultMsg.sendToTarget();
+            return true;
+        }
+
+        @Override
+        public void onCloseWindow(WebView window) {
+            for (BrowserTab candidate : new ArrayList<>(tabs)) {
+                if (candidate.webView == window) {
+                    closeTab(candidate);
+                    break;
+                }
+            }
+        }
+
+        @Override
+        public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
+            if (fileChooserCallback != null) fileChooserCallback.onReceiveValue(null);
+            fileChooserCallback = callback;
+            fileChooserAllowsMultiple = params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+            try {
+                Intent picker = params.createIntent();
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                startActivityForResult(picker, FILE_CHOOSER_REQUEST);
+                return true;
+            } catch (Exception error) {
+                fileChooserCallback = null;
+                fileChooserAllowsMultiple = false;
+                callback.onReceiveValue(null);
+                toast("Nenhum aplicativo para escolher arquivo");
+                return true;
+            }
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILE_CHOOSER_REQUEST && fileChooserCallback != null) {
+            fileChooserCallback.onReceiveValue(verifiedPickerUris(resultCode, data));
+            fileChooserCallback = null;
+            fileChooserAllowsMultiple = false;
+        }
+    }
+
+    /** Never pass an untrusted picker URI to WebView without a picker read grant. */
+    private Uri[] verifiedPickerUris(int resultCode, Intent result) {
+        try {
+            if (resultCode != RESULT_OK || result == null
+                    || (result.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) return null;
+
+            List<Uri> selected = new ArrayList<>();
+            ClipData clipData = result.getClipData();
+            if (clipData != null) {
+                int count = clipData.getItemCount();
+                if (count < 1 || count > MAX_SELECTED_FILES || (!fileChooserAllowsMultiple && count > 1)) return null;
+                for (int i = 0; i < count; i++) {
+                    ClipData.Item item = clipData.getItemAt(i);
+                    Uri uri = item == null ? null : item.getUri();
+                    if (!isSafePickerUri(uri)) return null; // Reject the entire result, not just one item.
+                    if (!selected.contains(uri)) selected.add(uri);
+                }
+            } else {
+                Uri uri = result.getData();
+                if (!isSafePickerUri(uri)) return null;
+                selected.add(uri);
+            }
+            return selected.isEmpty() ? null : selected.toArray(new Uri[0]);
+        } catch (RuntimeException ignored) {
+            // A malformed parcel or provider result is equivalent to canceling the picker.
+            return null;
+        }
+    }
+
+    private boolean isSafePickerUri(Uri uri) {
+        if (uri == null || !"content".equals(uri.getScheme())) return false;
+        String authority = uri.getAuthority();
+        if (authority == null || authority.isEmpty()) return false;
+        String ownPackage = getPackageName();
+        if (authority.equals(ownPackage) || authority.startsWith(ownPackage + ".")) return false;
+        ProviderInfo provider = getPackageManager().resolveContentProvider(authority, 0);
+        if (provider != null && ownPackage.equals(provider.packageName)) return false;
+        return checkUriPermission(uri, Process.myPid(), Process.myUid(),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (findBar != null && findBar.getVisibility() == View.VISIBLE) {
+            hideFindBar();
+            return;
+        }
+        if (activeTab != null && activeTab.webView.canGoBack()) activeTab.webView.goBack();
+        else if (tabs.size() > 1) closeTab(activeTab);
+        else super.onBackPressed();
+    }
+
+    @Override
+    protected void onPause() {
+        if (activeTab != null) activeTab.webView.onPause();
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (activeTab != null) activeTab.webView.onResume();
+    }
+
+    @Override
+    protected void onDestroy() {
+        ServiceWorkerController.getInstance().setServiceWorkerClient(null);
+        if (fileChooserCallback != null) {
+            fileChooserCallback.onReceiveValue(null);
+            fileChooserCallback = null;
+        }
+        for (BrowserTab tab : tabs) {
+            pageHost.removeView(tab.page);
+            if (tab.protectionScriptHandler != null) tab.protectionScriptHandler.remove();
+            tab.webView.destroy();
+        }
+        tabs.clear();
+        super.onDestroy();
+    }
+
+    private TextView text(String value, int sizeSp, int color) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(sizeSp);
+        view.setTextColor(color);
+        return view;
+    }
+
+    private GradientDrawable rounded(int color, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radiusDp));
+        return drawable;
+    }
+
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private static final class Bookmark {
+        final String url;
+        final String title;
+
+        Bookmark(String url, String title) {
+            this.url = url;
+            this.title = title == null || title.isEmpty() ? url : title;
+        }
+    }
+
+    private static final class HistoryEntry {
+        final String url;
+        final String title;
+
+        HistoryEntry(String url, String title) {
+            this.url = url;
+            this.title = title == null || title.isEmpty() ? url : title;
+        }
+    }
+
+    private static final class BrowserTab {
+        FrameLayout page;
+        WebView webView;
+        View home;
+        View error;
+        TextView errorDetails;
+        String title;
+        volatile String url;
+        Bitmap favicon;
+        final AtomicInteger blockedCount = new AtomicInteger();
+        ScriptHandler protectionScriptHandler;
+        boolean documentStartInstalled;
+        volatile String popupSourceUrl;
+        volatile boolean popupPending;
+        int progress;
+        boolean loading;
+        int navigationToken;
+    }
+}

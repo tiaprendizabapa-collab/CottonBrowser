@@ -9,12 +9,16 @@
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
     <Version>1.0.0</Version>
     <ApplicationIcon>..\LeanBrowser\Assets\CottonBrowser.ico</ApplicationIcon>
     <AssemblyName>CottonBrowserSetup</AssemblyName>
+    <WebView2InstallerPath Condition="'$(WebView2InstallerPath)' == ''">..\.tools\prerequisites\MicrosoftEdgeWebView2RuntimeInstallerX64.exe</WebView2InstallerPath>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Payload.zip" LogicalName="CottonBrowser.Payload.zip" />
+    <EmbeddedResource Include="$(WebView2InstallerPath)" LogicalName="CottonBrowser.WebView2Setup.exe" />
   </ItemGroup>
 </Project>

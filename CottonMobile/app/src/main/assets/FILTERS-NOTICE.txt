@@ -1,0 +1,25 @@
+CottonBrowser Android filter data
+
+easylist_domains.txt and easylist_allow.tsv are modified subsets of EasyList,
+extracted offline from the uBlock Origin Lite 2026.914.1325 snapshot included in
+this repository. The EasyList authors (https://easylist.to/) are the source of
+the filter material. uBlock Origin Lite is maintained by Raymond Hill and its
+contributors (https://github.com/gorhill/uBlock).
+
+These derived filter files are distributed under GPL-3.0-or-later. The complete
+license is provided in FILTERS-LICENSE.txt. Source snapshot, extraction script
+and modifications are available at:
+https://github.com/tiaprendizabapa-collab/CottonBrowser
+CottonMobile/checks/build_filter_assets.js
+LeanBrowser/Extensions/uBlockOriginLite/2026.914.1325/easylist.json
+
+Changes: only unconditional domain-block rules are extracted; third-party,
+resource-type, URL-path and other conditional block rules are not broadened.
+All allow rules from that snapshot retain URL/request/initiator constraints.
+Their party/resource-type constraints are relaxed to avoid false blocking in
+WebView, which does not provide those types. This subset is not the uBlock
+Origin Lite extension or a complete implementation of EasyList.
+
+blocklist.txt and the page/YouTube protection scripts are CottonBrowser's
+separate local protection rules. All data is bundled; no browsing URLs are
+sent to a filtering service and no remote filtering lookup is performed.

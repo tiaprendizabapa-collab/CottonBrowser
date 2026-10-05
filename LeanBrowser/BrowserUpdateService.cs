@@ -13,7 +13,7 @@ internal sealed class BrowserUpdateService : IDisposable
         "https://api.github.com/repos/tiaprendizabapa-collab/CottonBrowser/releases/latest";
     private const string AssetName = "CottonBrowser-win-x64.zip";
     private const long MaximumPackageBytes = 250L * 1024 * 1024;
-    private const long MaximumUpdaterBytes = 100L * 1024 * 1024;
+    private const long MaximumUpdaterBytes = 200L * 1024 * 1024;
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly string _stagingRoot;
@@ -121,8 +121,10 @@ internal sealed class BrowserUpdateService : IDisposable
 
             using var archive = ZipFile.OpenRead(archivePath);
             var updater = archive.GetEntry("CottonUpdater.exe");
-            if (updater is null || updater.Length <= 0 || updater.Length > MaximumUpdaterBytes)
-                throw new InvalidDataException("O pacote não contém um atualizador válido.");
+            if (updater is null)
+                throw new InvalidDataException("O pacote não contém CottonUpdater.exe.");
+            if (updater.Length <= 0 || updater.Length > MaximumUpdaterBytes)
+                throw new InvalidDataException($"O atualizador no pacote tem um tamanho inválido ({updater.Length} bytes).");
             await using (var source = updater.Open())
             await using (var destination = new FileStream(updaterPath, FileMode.CreateNew,
                 FileAccess.Write, FileShare.None, 65536, useAsync: true))
