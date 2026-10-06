@@ -142,12 +142,12 @@ internal static class Program
         Check(await core.ExecuteScriptAsync("!document.querySelector('.date-line').hidden && !document.querySelector('#welcome-title').hidden && document.querySelector('.quick-section').hidden") == "true", "A personalização deve permitir restaurar elementos e ocultar atalhos.");
         using var browser = new BrowserForm(); var tabs = Get<BrowserTabControl>(browser, "_tabView");
         var allowlist = new SiteAllowlist(new SiteExceptionStore(Path.Combine(Work, "split-exceptions.json")));
-        var left = new BrowserTab(allowlist) { Text = "Esquerda" }; var right = new BrowserTab(allowlist) { Text = "Direita" };
+        var left = new BrowserTab(allowlist, isPrivate: true) { Text = "Esquerda" }; var right = new BrowserTab(allowlist, isPrivate: true) { Text = "Direita" };
         tabs.TabPages.AddRange([left, right]);
         typeof(BrowserForm).GetField("_tabs", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(browser, new BrowserTabManager(tabs, env, allowlist));
         _ = browser.Handle;
         await left.Web.EnsureCoreWebView2Async(env); await right.Web.EnsureCoreWebView2Async(env);
-        File.WriteAllText(Path.Combine(Work, "article.html"), "<title>Artigo da direita</title><article><h1>Teste</h1><p>" + new string('b', 200) + "</p><form><input value='rascunho preservado'></form></article>");
+        File.WriteAllText(Path.Combine(Work, "article.html"), "<meta charset='utf-8'><title>Artigo da direita</title><article><h1>Teste</h1><p>" + new string('b', 200) + "</p><form><input value='rascunho preservado'></form></article>");
         right.Web.CoreWebView2.SetVirtualHostNameToFolderMapping("fixture.example.test", Work, CoreWebView2HostResourceAccessKind.DenyCors);
         var loaded = new TaskCompletionSource<bool>(); right.Web.CoreWebView2.NavigationCompleted += (_, _) => loaded.TrySetResult(true);
         right.Web.CoreWebView2.Navigate("https://fixture.example.test/article.html"); await loaded.Task;
@@ -157,7 +157,73 @@ internal static class Program
         Check(tabs.SelectedTab == right && Get<System.Collections.IDictionary>(browser, "_readers").Contains(right), "Leitura deve exibir a página que tinha foco na tela dividida.");
         Invoke(browser, "ExitReader", right);
         Check(await right.Web.CoreWebView2.ExecuteScriptAsync("document.querySelector('input').value") == "\"rascunho preservado\"", "Dividir e ler a página deve preservar o formulário original.");
+        await ReloadChecks(browser, tabs, right, left, form);
         Console.WriteLine("PASS: leitura e captura completa no WebView2 real; cookies isolados entre diretórios de perfis.");
+    }
+    private static async Task ReloadChecks(BrowserForm browser, BrowserTabControl tabs, BrowserTab tab, BrowserTab other, Form host)
+    {
+        host.Controls.Add(tabs); tabs.Dock = DockStyle.Fill; tabs.BringToFront();
+        tabs.SelectedTab = tab; Application.DoEvents();
+        Invoke(browser, "ConfigureTab", tab);
+        var core = tab.Web.CoreWebView2;
+        core.IsMuted = true; tab.IsPinned = true; tab.GroupName = "Teste de recarga";
+        var controller = (CoreWebView2Controller)typeof(WebView2).GetField("_coreWebView2Controller", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(tab.Web)!;
+        tab.Web.SetPageZoom(1.5); other.Web.SetPageZoom(0.8);
+        foreach (var shortcut in new[] { Keys.F5, Keys.R })
+        {
+            await NavigationAsync(core, () => Invoke(browser, "HandleShortcut", shortcut, shortcut == Keys.R, false, false));
+            Check(Math.Abs(controller.ZoomFactor - 1.5) < 0.001, "F5 e Ctrl+R devem preservar o zoom configurado no menu no motor real.");
+        }
+        // Exercise the WebView2 zoom event independently of the menu, then
+        // force the same automatic reset that Chromium performs on navigation.
+        tab.Web.ZoomFactor = 1.75;
+        // Host assignments do not raise the user zoom notification. Deliver
+        // that notification explicitly instead of sending physical input to
+        // the user's desktop; the zoom and reload still use the real engine.
+        ((EventHandler<EventArgs>?)typeof(WebView2).GetField("ZoomFactorChanged", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(tab.Web))?.Invoke(tab.Web, EventArgs.Empty);
+        void ResetNativeZoom(object? sender, CoreWebView2NavigationStartingEventArgs args) => tab.Web.ZoomFactor = 1;
+        core.NavigationStarting += ResetNativeZoom;
+        try { await NavigationAsync(core, core.Reload); }
+        finally { core.NavigationStarting -= ResetNativeZoom; }
+        Check(Math.Abs(controller.ZoomFactor - 1.75) < 0.001, "Recarregar deve restaurar o zoom recebido pelo evento nativo, mesmo após um reset automático do motor.");
+        Check(Math.Abs(other.Web.ZoomFactor - 0.8) < 0.001 && core.IsMuted && tab.IsPinned && tab.GroupName == "Teste de recarga",
+            "Recarregar deve preservar áudio, organização e zoom independente das outras abas.");
+        await (Task)typeof(BrowserForm).GetMethod("ToggleReaderAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(browser, null)!;
+        var readers = Get<System.Collections.IDictionary>(browser, "_readers"); var reader = (Control)readers[tab]!;
+        var tools = reader.Controls.OfType<FlowLayoutPanel>().Single();
+        foreach (var label in new[] { "A+", "Espaçamento", "Fundo claro / escuro" }) tools.Controls.OfType<Button>().Single(b => b.Text == label).PerformClick();
+        var text = reader.Controls.OfType<RichTextBox>().Single(); var fontSize = text.Font.Size; var color = text.BackColor;
+        await core.CallDevToolsProtocolMethodAsync("Network.setCacheDisabled", "{\"cacheDisabled\":true}");
+        File.WriteAllText(Path.Combine(Work, "article.html"), "<meta charset='utf-8'><title>Artigo atualizado</title><article><h1>Conteúdo novo após F5</h1><p>" + new string('c',200) + "</p></article>");
+        await NavigationAsync(core, () => Invoke(browser, "HandleShortcut", Keys.F5, false, false, false));
+        await WaitAsync(() => text.Text.Contains("Conteúdo novo após F5"), "O modo de leitura deve mostrar o conteúdo recarregado.");
+        Check(ReferenceEquals(readers[tab], reader) && text.Font.Size == fontSize && text.BackColor == color && text.Text.Contains("\n\n\n\n"),
+            "Recarregar deve manter o modo de leitura, a fonte, o fundo e o espaçamento escolhidos.");
+        Invoke(browser, "ExitReader", tab);
+        Invoke(browser, "ChangeZoom", 0); await NavigationAsync(core, core.Reload);
+        Check(Math.Abs(tab.Web.ZoomFactor - 1) < 0.001, "Redefinir zoom para 100% deve continuar valendo após recarregar.");
+        await (Task)typeof(BrowserForm).GetMethod("ToggleReaderAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(browser, null)!;
+        await NavigationAsync(core, () => core.Navigate("https://fixture.example.test/article.html?next=1"));
+        Check(!readers.Contains(tab), "Navegar para outro endereço deve encerrar a leitura da página anterior.");
+        Check(Math.Abs(tab.Web.ZoomFactor - 1) < 0.001, "Uma nova navegação deve respeitar o zoom atual.");
+        Invoke(browser, "StartSplit", tab, other);
+        await NavigationAsync(core, core.Reload);
+        Check(tab.Web.Parent != tab && other.Web.Parent != other, "Recarregar deve preservar a tela dividida.");
+        Console.WriteLine("PASS: F5, Ctrl+R e recarga nativa preservam zoom, inclusive após reset automático; áudio, grupos, tela dividida e ajustes de leitura preservados.");
+    }
+    private static async Task NavigationAsync(CoreWebView2 core, Action start)
+    {
+        var completed = new TaskCompletionSource<bool>();
+        void OnCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs args) => completed.TrySetResult(args.IsSuccess);
+        core.NavigationCompleted += OnCompleted;
+        try { start(); Check(await completed.Task.WaitAsync(TimeSpan.FromSeconds(10)), "A página de teste deve recarregar com sucesso."); }
+        finally { core.NavigationCompleted -= OnCompleted; }
+    }
+    private static async Task WaitAsync(Func<bool> condition, string failure)
+    {
+        var deadline = Environment.TickCount64 + 5000;
+        while (!condition() && Environment.TickCount64 < deadline) await Task.Delay(20);
+        Check(condition(), failure);
     }
     private static T Get<T>(object instance, string field) => (T)instance.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(instance)!;
     private static void Invoke(object instance, string method, params object[] args) => instance.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(instance,args);

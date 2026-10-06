@@ -25,6 +25,11 @@ executável ainda não existe ou os arquivos de origem mudaram. Use `build.cmd`
 para recompilar manualmente. Os scripts encontram a pasta do projeto mesmo
 quando iniciados de outro diretório.
 
+Nas alterações do dia a dia, atualize o executável existente com `build.cmd`,
+sem gerar um setup a cada mudança. Se estiver usando a cópia instalada no
+Windows, consulte a seção **Atualizar a instalação local durante o
+desenvolvimento** em [UPDATES.md](../UPDATES.md).
+
 Para compilar, é necessário o **SDK .NET 8**. O script detecta o SDK local em
 `.tools\dotnet`, quando disponível, ou utiliza o `dotnet` instalado no Windows.
 O primeiro restore pode precisar de acesso ao NuGet.
@@ -56,6 +61,10 @@ O resultado fica em `CottonInstaller\dist\CottonBrowserSetup.exe`. A geração
 do setup baixa o instalador offline do WebView2 quando ele ainda não está
 disponível em `.tools\prerequisites`.
 
+Gere o setup somente quando precisar distribuir ou instalar o navegador.
+Mantenha o nome fixo `CottonBrowserSetup.exe`, substituindo o arquivo anterior
+em vez de acumular cópias com a versão no nome.
+
 ## Atalhos
 
 | Tecla | Ação |
@@ -83,6 +92,24 @@ disponível em `.tools\prerequisites`.
 
 O menu de três pontos e o menu de contexto também oferecem **Inspecionar
 página**. O inspetor abre em uma janela separada do WebView2.
+
+Quando o menu de três pontos ultrapassa a altura da janela, use a roda do
+mouse para subir ou descer pelas opções. A rolagem também funciona sobre
+os botões de zoom e nos submenus, respeitando os limites do menu.
+
+Recarregar com `F5`, `Ctrl+R` ou o botão de recarga mantém o zoom da aba,
+inclusive o zoom alterado com `Ctrl` e a roda do mouse. O áudio silenciado,
+os grupos e a tela dividida também são preservados. No modo de leitura,
+recarregar a mesma página atualiza o texto e mantém a fonte, o espaçamento
+e o fundo escolhidos; navegar para outra página encerra o modo de leitura.
+
+No YouTube, um vídeo que permanece sem metadados em `0:00 / 0:00` por
+cerca de 20 segundos recebe uma tentativa de recuperação do player.
+Se continuar sem carregar, aparecem **Tentar carregar vídeo** e
+**Recarregar página**, sem precisar fechar o navegador. A recuperação
+preserva volume, áudio silenciado e velocidade; não reinicia vídeos
+já carregados, pausados ou lives. Ela funciona também com a proteção
+de anúncios desligada.
 
 ## Favoritos, leitura e personalização
 

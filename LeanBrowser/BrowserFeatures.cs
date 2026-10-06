@@ -87,10 +87,26 @@ public sealed partial class BrowserForm
             if (tab.IsDisposed || core.Source != source || document.RootElement.ValueKind != JsonValueKind.Object) return;
             var content = document.RootElement.GetProperty("text").GetString() ?? "";
             if (content.Length < 80) { MessageBox.Show(this, "Esta página não possui texto suficiente para o modo de leitura."); return; }
-            var reader = new ReadingView(document.RootElement.GetProperty("title").GetString() ?? "Leitura", content);
+            var reader = new ReadingView(document.RootElement.GetProperty("title").GetString() ?? "Leitura", content) { SourceUrl = source };
             reader.ExitRequested += () => ExitReader(tab); _readers.Add(tab, reader); tab.Controls.Add(reader); reader.BringToFront(); tab.Web.Visible = false;
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException or JsonException) { UiDialogs.Error(this, ex); }
+    }
+    private async Task RefreshReaderAsync(BrowserTab tab, Func<bool> isCurrentNavigation)
+    {
+        if (!_readers.TryGetValue(tab, out var reader) || tab.Web.CoreWebView2 is not { } core) return;
+        try
+        {
+            using var document = JsonDocument.Parse(await core.ExecuteScriptAsync(ReadingView.ExtractionScript));
+            if (tab.IsDisposed || !isCurrentNavigation() || !_readers.TryGetValue(tab, out var current)
+                || current != reader || document.RootElement.ValueKind != JsonValueKind.Object) return;
+            reader.UpdateContent(document.RootElement.GetProperty("title").GetString() ?? "Leitura",
+                document.RootElement.GetProperty("text").GetString() ?? "");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException or JsonException)
+        {
+            // Keep the existing reading view if the document closes during extraction.
+        }
     }
     private void ExitReader(BrowserTab tab)
     {

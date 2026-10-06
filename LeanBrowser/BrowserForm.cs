@@ -111,7 +111,7 @@ public sealed partial class BrowserForm : Form
     private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _newTabContextItems = new();
     private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _inspectContextItems = new();
     private readonly Dictionary<CoreWebView2, string> _contextMenuLinks = new();
-    private WebView2? _web => ActiveBrowserTab?.Web;
+    private TabWebView? _web => ActiveBrowserTab?.Web;
     private AdBlocker? _blocker => ActiveBrowserTab?.Blocker;
 
     private CoreWebView2? _core => _web?.CoreWebView2;
@@ -1620,6 +1620,8 @@ public sealed partial class BrowserForm : Form
             if (tab.IsDisposed || IsDisposed) return;
             tab.Blocker.Enabled = _adProtection.Enabled;
             ConfigureTab(tab);
+            await YouTubePlaybackRecovery.AttachAsync(tab.Web.CoreWebView2);
+            if (tab.IsDisposed || IsDisposed) return;
             await _memorySaver.RegisterTabAsync(tab);
             if (_adProtection.Failure is { } failure && !_protectionFailureShown)
             {
@@ -1714,6 +1716,7 @@ public sealed partial class BrowserForm : Form
             _contextMenuLinks.Remove(core);
         };
         var faviconRequest = 0;
+        ulong navigationId = 0;
         ApplySettings(core);
         core.IsDocumentPlayingAudioChanged += (_, _) => _tabView.RefreshTab(tab);
         core.IsMutedChanged += (_, _) => { _tabView.RefreshTab(tab); NotifySessionChanged(); };
@@ -1726,7 +1729,9 @@ public sealed partial class BrowserForm : Form
         tab.Blocker.Attach(core);
         core.NavigationStarting += (_, e) =>
         {
-            ExitReader(tab);
+            navigationId = e.NavigationId;
+            if (_readers.TryGetValue(tab, out var reader)
+                && !string.Equals(e.Uri, reader.SourceUrl, StringComparison.Ordinal)) ExitReader(tab);
             TrackTranslationNavigation(tab, e.Uri);
             faviconRequest++;
             // Mantém o ícone atual até o WebView2 confirmar uma mudança.
@@ -1765,6 +1770,7 @@ public sealed partial class BrowserForm : Form
             tab.Loading = false;
             tab.LastKnownUrl = core.Source;
             NotifySessionChanged();
+            if (e.IsSuccess) await RefreshReaderAsync(tab, () => navigationId == e.NavigationId);
             if (e.IsSuccess) await ApplyStartPageSearchAsync(tab);
             if (e.IsSuccess)
             {
@@ -2307,7 +2313,7 @@ public sealed partial class BrowserForm : Form
         var next = direction == 0 ? 1d : direction > 0
             ? levels.FirstOrDefault(level => level > current + 0.001, levels[^1])
             : levels.LastOrDefault(level => level < current - 0.001, levels[0]);
-        web.ZoomFactor = next;
+        web.SetPageZoom(next);
         ShowZoom(web.ZoomFactor);
     }
 

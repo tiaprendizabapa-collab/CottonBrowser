@@ -8,9 +8,10 @@ internal sealed class ReadingView : UserControl
     private readonly FlowLayoutPanel _tools = new() { Dock = DockStyle.Top, Height = 48 };
     private float _fontSize = 16;
     private bool _dark;
-    private readonly string _originalText;
+    private string _originalText;
     private bool _wideSpacing;
     private Font? _readingFont;
+    internal string SourceUrl { get; init; } = "";
     public event Action? ExitRequested;
     public ReadingView(string title, string content)
     {
@@ -38,6 +39,13 @@ internal sealed class ReadingView : UserControl
         _text.ForeColor = _dark ? Color.FromArgb(205, 214, 244) : Color.FromArgb(40, 43, 50);
         var previous = _readingFont; _readingFont = new Font("Segoe UI", _fontSize); _text.Font = _readingFont; previous?.Dispose();
         foreach (Control control in _tools.Controls) { control.BackColor = BackColor; control.ForeColor = _text.ForeColor; }
+    }
+    internal void UpdateContent(string title, string content)
+    {
+        var selection = _text.SelectionStart;
+        _originalText = title + "\n\n" + content;
+        _text.Text = _wideSpacing ? _originalText.Replace("\n", "\n\n") : _originalText;
+        _text.SelectionStart = Math.Min(selection, _text.TextLength);
     }
     protected override void Dispose(bool disposing) { base.Dispose(disposing); if (disposing) _readingFont?.Dispose(); }
     internal const string ExtractionScript = """

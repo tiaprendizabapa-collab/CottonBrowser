@@ -108,14 +108,18 @@ public static class MenuChecks
             "O cenário curto deve exercitar um menu com conteúdo maior que a área visível.");
         Check(buttons[1].Text == "125%" && buttons.Take(3).All(button => button.Enabled),
             "Adaptar o menu à janela não deve perder o zoom ou a disponibilidade dos comandos.");
+        CheckMouseWheel(menu, zoom);
 
         ConstrainAndCheck(menu, new Size(900, 800));
         Check(menu.Size == normalSize, "Voltar à área normal deve recuperar o tamanho original do menu.");
         Check(zoom.Control.Controls.Cast<Control>().OrderBy(button => button.TabIndex).SequenceEqual(buttons),
             "Redimensionar e atualizar o menu deve preservar os controles de zoom.");
         Capture(menu, dark);
-        if (Environment.GetEnvironmentVariable("COTTON_MENU_LIVE_CAPTURE") == "1")
-            CheckLiveControls(menu);
+            if (Environment.GetEnvironmentVariable("COTTON_MENU_LIVE_CAPTURE") == "1")
+            {
+                CheckLiveControls(menu);
+                CheckLiveWheel();
+            }
     }
 
     private static BrowserMenuItem Item(string text, string glyph, string shortcut = "") => new(text, glyph, shortcut);
@@ -131,6 +135,36 @@ public static class MenuChecks
     private static void Click(Control button) =>
         typeof(Control).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(button, [EventArgs.Empty]);
+
+    private static void CheckMouseWheel(BrowserOverflowMenu menu, BrowserMenuZoom zoom)
+    {
+        var top = menu.Items[0].Bounds.Top;
+        var controls = zoom.Control.Controls.Cast<Control>().ToArray();
+        var selected = menu.Items.Cast<ToolStripItem>().FirstOrDefault(item => item.Selected);
+        var clicks = 0;
+        foreach (ToolStripItem item in menu.Items) item.Click += (_, _) => clicks++;
+        void Wheel(int delta) => typeof(BrowserOverflowMenu).GetMethod("OnMouseWheel",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(menu,
+            [new HandledMouseEventArgs(MouseButtons.None, 0, 100, 100, delta)]);
+        Wheel(120);
+        Check(menu.Items[0].Bounds.Top == top, "Rolar para cima no início não pode ultrapassar o limite.");
+        Wheel(-60); Check(menu.Items[0].Bounds.Top == top, "Movimentos parciais devem acumular sem saltar opções.");
+        Wheel(-60);
+        if (SystemInformation.MouseWheelScrollLines != 0)
+        {
+            Check(menu.Items[0].Bounds.Top < top, "A roda para baixo deve mover o conteúdo do menu.");
+            for (var i = 0; i < 100; i++) Wheel(-120);
+            var bottom = menu.Items[0].Bounds.Top; Wheel(-120);
+            Check(menu.Items[0].Bounds.Top == bottom, "A roda deve parar no fim do menu.");
+            Wheel(120); Check(menu.Items[0].Bounds.Top > bottom, "A roda para cima deve voltar às opções anteriores.");
+            for (var i = 0; i < 100; i++) Wheel(120);
+            Check(menu.Items[0].Bounds.Top == top, "A roda deve retornar ao início sem deixar espaço vazio.");
+        }
+        Check(clicks == 0 && zoom.Control.Controls.Cast<Control>().SequenceEqual(controls)
+            && controls[1].Text == "125%", "Rolar não pode ativar opções, mudar o zoom ou recriar os botões.");
+        Check(menu.Items.Cast<ToolStripItem>().FirstOrDefault(item => item.Selected) == selected,
+            "Rolar não pode trocar a opção selecionada.");
+    }
 
     private static void Capture(BrowserOverflowMenu menu, bool dark)
     {
@@ -182,6 +216,43 @@ public static class MenuChecks
                 "Os controles de zoom devem aparecer no menu aberto.");
             Check(buttons.All(button => zoom.Control.ClientRectangle.Contains(button.Bounds)),
                 "Os botões de zoom devem permanecer dentro da linha.");
+        }
+        finally { menu.Close(); }
+    }
+
+    private static void CheckLiveWheel()
+    {
+        using var menu = new BrowserOverflowMenu();
+        var commands = 0;
+        var zoom = new BrowserMenuZoom(_ => commands++, () => commands++);
+        zoom.SetState(1.25, true, false); menu.Items.Add(zoom);
+        for (var i = 0; i < 30; i++) menu.Items.Add(Item("Opção " + i, "\uE946"));
+        ConstrainAndCheck(menu, new Size(480, 300));
+        var screen = Screen.PrimaryScreen!.WorkingArea;
+        menu.Show(new Point(screen.Left + 24, screen.Top + 24));
+        try
+        {
+            Application.DoEvents();
+            var button = zoom.Control.Controls.Cast<Control>().Single(control => control.Text == "125%");
+            Check(button.Visible, "O botão de zoom da primeira linha deve estar visível.");
+            var point = button.PointToScreen(new Point(button.Width / 2, button.Height / 2));
+            Message Wheel(Point position, IntPtr target) => Message.Create(target, 0x020A,
+                new IntPtr(unchecked((int)((uint)(ushort)-120 << 16))),
+                new IntPtr(unchecked((int)((uint)(ushort)position.X | ((uint)(ushort)position.Y << 16)))));
+            var top = menu.Items[0].Bounds.Top;
+            var message = Wheel(point, button.Handle);
+            Check(Application.FilterMessage(ref message), "A roda sobre um botão hospedado deve ser capturada pelo menu aberto.");
+            if (SystemInformation.MouseWheelScrollLines != 0)
+                Check(menu.Items[0].Bounds.Top < top, "A roda sobre o botão de zoom deve rolar o menu.");
+            Check(commands == 0 && button.Text == "125%" && menu.Visible,
+                "Rolar sobre o zoom não pode mudar o valor ou fechar o menu.");
+            var outside = Wheel(new Point(menu.Right + 50, menu.Bottom + 50), button.Handle);
+            var scrolled = menu.Items[0].Bounds.Top;
+            Check(!Application.FilterMessage(ref outside) && menu.Items[0].Bounds.Top == scrolled,
+                "A roda fora do menu deve continuar disponível para a página.");
+            menu.Close();
+            message = Wheel(point, IntPtr.Zero);
+            Check(!Application.FilterMessage(ref message), "Fechar o menu deve remover seu filtro da roda do mouse.");
         }
         finally { menu.Close(); }
     }

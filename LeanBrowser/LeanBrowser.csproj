@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>CottonBrowser</AssemblyName>
-    <Version>1.0.35</Version>
+    <Version>1.0.38</Version>
     <RootNamespace>LeanBrowser</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\CottonBrowser.ico</ApplicationIcon>
@@ -69,6 +69,7 @@
     <EmbeddedResource Include="Assets\uBOLite_2026.914.1325.edge.zip" />
     <EmbeddedResource Include="Assets\Recovery\*.js" />
     <EmbeddedResource Include="Assets\youtube-protection.js" />
+    <EmbeddedResource Include="Assets\youtube-playback.js" />
     <EmbeddedResource Include="Assets\AbapaLogo.png" />
     <EmbeddedResource Include="Assets\foxy-jumpscare.mp4" />
     <EmbeddedResource Include="Assets\foxy-jumpscare.mp3" />

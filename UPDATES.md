@@ -44,6 +44,19 @@ backup dos arquivos substituídos, instala o novo executável e os arquivos da
 Central e reinicia o programa. Perfil WebView2, histórico, favoritos e outras
 preferências ficam em AppData e não são substituídos.
 
+## Atualizar a instalação local durante o desenvolvimento
+
+Para aplicar mudanças locais, compile com `build.cmd` sem gerar outro setup.
+Com todas as janelas do CottonBrowser fechadas, substitua `CottonBrowser.exe`,
+`CottonUpdater.exe` e os arquivos de `Assets\Bridge` da instalação em
+`%LOCALAPPDATA%\Programs\CottonBrowser` pelos arquivos publicados em
+`LeanBrowser\dist`. Abra o navegador pelo atalho habitual após a cópia.
+Mantenha os demais arquivos da instalação e os dados de navegação em AppData.
+
+O instalador deve ser gerado apenas quando necessário para distribuição ou
+nova instalação. Use sempre `CottonBrowserSetup.exe` e substitua a cópia anterior;
+não crie um arquivo de setup com um novo nome a cada alteração local.
+
 ## Publicar atualizações
 
 Ao mesclar alterações na `main`, o GitHub Actions compila o navegador e o

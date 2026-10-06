@@ -12,9 +12,17 @@ public static class BrowserMenuPalette
 }
 
 /// <summary>Menu nativo com desenho próprio, navegação por teclado e rolagem automática.</summary>
-public sealed class BrowserOverflowMenu : ContextMenuStrip
+public sealed class BrowserOverflowMenu : ContextMenuStrip, IMessageFilter
 {
     private readonly Font _menuFont = new(Theme.UiFont, 9.5f);
+    // WinForms exposes its scroll buttons but keeps the row-scrolling operation
+    // internal. Reuse that operation so hosted controls and limits stay in sync.
+    private static readonly Action<ToolStripDropDownMenu, bool> ScrollRow =
+        typeof(ToolStripDropDownMenu).GetMethod("ScrollInternal",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            null, [typeof(bool)], null)!.CreateDelegate<Action<ToolStripDropDownMenu, bool>>();
+    private int _wheelRemainder;
+    private bool _wheelFilterInstalled;
     public BrowserOverflowMenu()
     {
         ShowImageMargin = false;
@@ -60,6 +68,76 @@ public sealed class BrowserOverflowMenu : ContextMenuStrip
         PerformLayout();
     }
 
+    protected override void OnOpened(EventArgs e)
+    {
+        _wheelRemainder = 0;
+        if (!_wheelFilterInstalled)
+        {
+            Application.AddMessageFilter(this);
+            _wheelFilterInstalled = true;
+        }
+        base.OnOpened(e);
+    }
+
+    protected override void OnClosed(ToolStripDropDownClosedEventArgs e)
+    {
+        RemoveWheelFilter();
+        base.OnClosed(e);
+    }
+
+    private void RemoveWheelFilter()
+    {
+        if (_wheelFilterInstalled) Application.RemoveMessageFilter(this);
+        _wheelFilterInstalled = false;
+        _wheelRemainder = 0;
+    }
+
+    public bool PreFilterMessage(ref Message message)
+    {
+        const int wmMouseWheel = 0x020A;
+        if (message.Msg != wmMouseWheel || !Visible || IsDisposed) return false;
+        var coordinates = message.LParam.ToInt64();
+        var screenPoint = new Point(unchecked((short)coordinates), unchecked((short)(coordinates >> 16)));
+        if (!ClientRectangle.Contains(PointToClient(screenPoint))) return false;
+        // A submenu gets the wheel when its popup overlaps the parent menu.
+        if (Items.OfType<ToolStripDropDownItem>().Any(item => item.HasDropDownItems
+            && item.DropDown.Visible && item.DropDown.Bounds.Contains(screenPoint))) return false;
+        var point = PointToClient(screenPoint);
+        var delta = unchecked((short)(message.WParam.ToInt64() >> 16));
+        OnMouseWheel(new HandledMouseEventArgs(MouseButtons.None, 0, point.X, point.Y, delta));
+        message.Result = IntPtr.Zero;
+        return true;
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        if (e is HandledMouseEventArgs handled) handled.Handled = true;
+        var total = (long)_wheelRemainder + e.Delta;
+        var notches = total / SystemInformation.MouseWheelScrollDelta;
+        _wheelRemainder = (int)(total % SystemInformation.MouseWheelScrollDelta);
+        var lines = SystemInformation.MouseWheelScrollLines;
+        if (notches != 0 && lines != 0)
+        {
+            var up = notches > 0;
+            var scrollButtons = DisplayedItems.Cast<ToolStripItem>()
+                .Where(item => item is ToolStripControlHost && !Items.Contains(item))
+                .OrderBy(item => item.Bounds.Top).ToArray();
+            if (scrollButtons.Length == 2)
+            {
+                var button = up ? scrollButtons[0] : scrollButtons[1];
+                var rows = lines < 0 ? Math.Max(1, Items.Cast<ToolStripItem>()
+                    .Count(item => item.Available && DisplayRectangle.IntersectsWith(item.Bounds))) : lines;
+                for (long step = 0; step < Math.Abs(notches) * rows && button.Enabled; step++)
+                {
+                    var previousTop = Items.Count > 0 ? Items[0].Bounds.Top : 0;
+                    ScrollRow(this, up);
+                    if (Items.Count == 0 || Items[0].Bounds.Top == previousTop) break;
+                }
+            }
+        }
+        base.OnMouseWheel(e);
+    }
+
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
@@ -73,6 +151,7 @@ public sealed class BrowserOverflowMenu : ContextMenuStrip
 
     protected override void Dispose(bool disposing)
     {
+        if (disposing) RemoveWheelFilter();
         base.Dispose(disposing);
         if (disposing) _menuFont.Dispose();
     }

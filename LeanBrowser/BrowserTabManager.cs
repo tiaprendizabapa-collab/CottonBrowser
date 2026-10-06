@@ -17,7 +17,7 @@ public sealed class BrowserTab : TabPage
     public DateTimeOffset LastActivatedAt { get; set; } = DateTimeOffset.UtcNow;
     public string LastKnownUrl { get; internal set; } = "about:blank";
     public bool IsPrivate { get; }
-    public WebView2 Web { get; } = new TabWebView() { Dock = DockStyle.Fill, DefaultBackgroundColor = Theme.Chrome };
+    public TabWebView Web { get; } = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Theme.Chrome };
     public AdBlocker Blocker { get; }
     public PopupPolicy Popups { get; } = new();
     public DocumentProtection DocumentProtection { get; } = new();
