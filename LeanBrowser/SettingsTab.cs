@@ -54,6 +54,8 @@ public sealed class SettingsTab : TabPage
     private readonly SettingsCard _sessionCard;
     private readonly SettingsCard _performanceCard;
     private readonly SettingsCard _searchEngineCard;
+    private readonly SettingsCard _aboutCard;
+    private readonly AboutUpdatesView _aboutUpdates = new();
     private readonly CheckBox _restoreSession = new() { Text = "Continuar de onde parei", AccessibleName = "Restaurar abas ao iniciar", AutoSize = false };
     private readonly CheckBox _memorySaver = new() { Text = "Ativar economia de memória", AccessibleName = "Ativar economia de memória", AutoSize = false };
     private readonly NumericUpDown _suspendDelay = new() { Minimum = 1, Maximum = 240, AccessibleName = "Minutos antes de suspender abas inativas" };
@@ -74,6 +76,8 @@ public sealed class SettingsTab : TabPage
     public event Action? ProfileRequested;
     public event Action? BrowserCenterRequested;
     public event Action<string>? HistoryEntrySelected;
+    public event Action? UpdateCheckRequested;
+    public event Action? UpdateInstallRequested;
 
     public SettingsTab(Action<bool> setTheme, Action clearPasswords, Func<IReadOnlyList<Bookmark>> loadBookmarks,
         Action addBookmark, Action<string> removeBookmark, bool isAdmin, Action<Color> setAccent, string? userName = null) : base("Configurações")
@@ -94,6 +98,7 @@ public sealed class SettingsTab : TabPage
         AddNavigation("Inicialização", "\uE777"); AddNavigation("Desempenho", "\uE945"); AddNavigation("Pesquisa", "\uE721");
         if (isAdmin) AddNavigation("Senhas salvas", "\uE72E");
         AddNavigation("Privacidade e proteção", "\uEA18");
+        AddNavigation("Sobre e atualizações", "\uE946");
 
         var profile = AddCard("Geral", "Seu perfil", "Conta e permissões desta sessão.");
         profile.AddRow((userName ?? Environment.UserName).Split('\\').Last(), isAdmin ? "Modo avançado · Configurações adicionais disponíveis" : "Modo padrão", "\uE77B", () => ProfileRequested?.Invoke());
@@ -107,6 +112,12 @@ public sealed class SettingsTab : TabPage
         shortcuts.AddRow("Pesquisa", "Escolha Google, Bing ou DuckDuckGo", "\uE721", () => SelectSection("Pesquisa"));
         if (isAdmin) shortcuts.AddRow("Senhas salvas", "Gerencie as credenciais deste perfil", "\uE72E", () => SelectSection("Senhas salvas"));
         shortcuts.AddRow("Privacidade e proteção", "Acesse as ferramentas de segurança", "\uEA18", () => SelectSection("Privacidade e proteção"));
+        shortcuts.AddRow("Sobre e atualizações", "Confira a versão e as novidades do CottonBrowser", "\uE946", ShowAboutUpdates);
+
+        _aboutCard = AddCard("Sobre e atualizações", "CottonBrowser", "Versão instalada, atualizações e novidades do navegador.", "sobre versao versão atualizacao atualização atualizar novidades release");
+        _aboutCard.Controls.Add(_aboutUpdates);
+        _aboutUpdates.CheckRequested += () => UpdateCheckRequested?.Invoke();
+        _aboutUpdates.InstallRequested += () => UpdateInstallRequested?.Invoke();
 
         _historyCard = AddCard("Histórico", "Histórico de navegação", "Pesquise páginas visitadas ou apague visitas e períodos.", "historico histórico visitas páginas apagar excluir");
         _newTabCard = AddCard("Nova guia", "Personalizar a nova guia", "Escolha o fundo, os elementos visíveis e até 12 atalhos.", "nova guia fundo atalhos personalizar relógio saudacao");
@@ -213,6 +224,15 @@ public sealed class SettingsTab : TabPage
     }
 
     public void ShowBookmarks() { SelectSection("Favoritos"); if (_favorites.Items.Count != 0) _favorites.Focus(); }
+    public void ShowAboutUpdates() => SelectSection("Sobre e atualizações");
+
+    internal void ConfigureUpdates(Version installed, UpdateCheckHistory? history, BrowserUpdate? available,
+        bool busy, string? activity)
+    {
+        _aboutUpdates.SetState(installed, history, available, busy, activity);
+        LayoutPage();
+    }
+
     public void ShowHistory() { SelectSection("Histórico"); _historyView?.FocusSearch(); }
     public void ShowNewTab() => SelectSection("Nova guia");
     internal void ConfigureBookmarks(BookmarkStore store, Action changed)
@@ -303,6 +323,7 @@ public sealed class SettingsTab : TabPage
         _brand.BackColor = _search.BackColor = Theme.Chrome; _searchInput.BackColor = _clearSearch.BackColor = Theme.Surface; _searchInput.ForeColor = Theme.Ink;
         foreach (var card in _cards) card.ApplyTheme();
         _historyView?.ApplyTheme();
+        _aboutUpdates.ApplyTheme();
         _bookmarkManager?.ApplyTheme(); _newTabCustomization.ApplyTheme();
         foreach (var button in _navigation.Values) { button.BackColor = Theme.Chrome; button.Invalidate(); }
         _favorites.BackColor = Theme.Surface; _favorites.ForeColor = Theme.Ink;
@@ -339,6 +360,7 @@ public sealed class SettingsTab : TabPage
         {
             "Aparência" => "Um visual que combina com você.", "Favoritos" => "Organize seus destinos preferidos.",
             "Histórico" => "Consulte e gerencie sua navegação sem sair das configurações.",
+            "Sobre e atualizações" => "Confira sua versão e acompanhe as novidades do CottonBrowser.",
             "Nova guia" => "Deixe a página inicial com a sua cara.",
             "Senhas salvas" => "Cuide das credenciais armazenadas neste perfil.", "Privacidade e proteção" => "Sua navegação, com mais controle.",
             "Inicialização" => "Continue sua navegação ao abrir o CottonBrowser.", "Desempenho" => "Ajuste o uso de recursos das abas.", "Pesquisa" => "Encontre o que precisa com seu buscador preferido.",
@@ -392,6 +414,13 @@ public sealed class SettingsTab : TabPage
     }
     private int CardHeight(SettingsCard card, int width)
     {
+        if (ReferenceEquals(card, _aboutCard))
+        {
+            var contentWidth = Math.Max(1, width - D(48));
+            var height = _aboutUpdates.HeightForWidth(contentWidth);
+            _aboutUpdates.SetBounds(D(24), D(96), contentWidth, height);
+            return _aboutUpdates.Bottom + D(24);
+        }
         if (ReferenceEquals(card, _newTabCard) || (ReferenceEquals(card, _favoritesCard) && _bookmarkManager is not null))
         {
             var height = Math.Max(D(width < D(600) ? 620 : 490), _body.ClientSize.Height - D(62));

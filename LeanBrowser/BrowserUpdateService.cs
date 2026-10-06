@@ -5,6 +5,7 @@ using System.Text.Json;
 namespace LeanBrowser;
 
 internal sealed record BrowserUpdate(Version Version, string Tag, Uri DownloadUrl, string Sha256, long Size);
+internal sealed record BrowserReleaseInfo(Version Version, string Tag, string Notes);
 internal sealed record StagedBrowserUpdate(string ArchivePath, string UpdaterPath);
 
 internal sealed class BrowserUpdateService : IDisposable
@@ -17,6 +18,7 @@ internal sealed class BrowserUpdateService : IDisposable
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly string _stagingRoot;
+    public BrowserReleaseInfo? LatestRelease { get; private set; }
 
     public BrowserUpdateService(HttpClient? httpClient = null, string? stagingRoot = null)
     {
@@ -49,7 +51,15 @@ internal sealed class BrowserUpdateService : IDisposable
 
         var version = new Version(parsedVersion.Major, parsedVersion.Minor,
             Math.Max(0, parsedVersion.Build), Math.Max(0, parsedVersion.Revision));
-        if (version <= installedVersion) return null;
+        var notes = release.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String
+            ? body.GetString() ?? string.Empty : string.Empty;
+        // Notas são apresentadas como texto, sem executar HTML ou links da publicação.
+        var info = new BrowserReleaseInfo(version, tag, notes[..Math.Min(notes.Length, 24000)]);
+        if (version <= installedVersion)
+        {
+            LatestRelease = info;
+            return null;
+        }
 
         foreach (var asset in release.GetProperty("assets").EnumerateArray())
         {
@@ -71,6 +81,7 @@ internal sealed class BrowserUpdateService : IDisposable
             if (size <= 0 || size > MaximumPackageBytes)
                 throw new InvalidDataException("O tamanho do pacote de atualização é inválido.");
 
+            LatestRelease = info;
             return new BrowserUpdate(version, tag, url, digest[7..].ToLowerInvariant(), size);
         }
 

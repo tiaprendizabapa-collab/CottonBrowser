@@ -20,6 +20,7 @@ var digest = Convert.ToHexString(SHA256.HashData(package)).ToLowerInvariant();
 var releaseJson = JsonSerializer.Serialize(new
 {
     tag_name = "v1.0.1",
+    body = "## Novidades\n\n- Tela Sobre e atualizações.",
     assets = new[]
     {
         new { name = "CottonBrowser-win-x64.zip", browser_download_url = assetUrl,
@@ -50,6 +51,24 @@ try
     Check(await service.CheckAsync(new Version(1, 0, 1, 0), CancellationToken.None) is null,
         "installed version is current");
 
+    Check(service.LatestRelease?.Notes.Contains("Sobre e atualizações") == true,
+        "release notes remain available when the installed version is current");
+    var historyPath = Path.Combine(stagingRoot, "update-check.json");
+    var historyStore = new UpdateCheckHistoryStore(historyPath);
+    Check(historyStore.Load() is null, "first launch has no previous check");
+    var checkedAt = DateTimeOffset.UtcNow;
+    Check(historyStore.Save(new UpdateCheckHistory(checkedAt, true, service.LatestRelease)),
+        "successful check history can be saved");
+    var restored = new UpdateCheckHistoryStore(historyPath).Load();
+    Check(restored?.CheckedAt == checkedAt && restored.Succeeded && restored.Release?.Version == new Version(1, 0, 1, 0),
+        "check time and release survive restarting the browser");
+    Check(restored?.Release?.Notes == service.LatestRelease?.Notes, "cached notes survive restarting the browser");
+    historyStore.Save(new UpdateCheckHistory(checkedAt.AddMinutes(1), false, restored?.Release));
+    Check(historyStore.Load() is { Succeeded: false, Release: not null }, "failed check retains previous notes");
+    File.WriteAllText(historyPath, "{invalid");
+    Check(historyStore.Load() is null, "malformed history does not prevent opening settings");
+    File.WriteAllText(historyPath, "{\"CheckedAt\":\"2026-10-05T12:00:00Z\",\"Succeeded\":true,\"Release\":{\"Version\":null,\"Tag\":\"v1.0.1\",\"Notes\":null}}");
+    Check(historyStore.Load() is null, "invalid cached release is ignored");
     if (update is not null)
     {
         var staged = await service.DownloadAsync(update, null, CancellationToken.None);

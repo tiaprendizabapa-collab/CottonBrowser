@@ -57,6 +57,7 @@ internal static class Program
         DownloadChecks.Run();
         MenuChecks.Run();
         OrganizationChecks.Run();
+        AboutChecks.Run();
     }
 
     private static void MiddleClick(Control header) =>

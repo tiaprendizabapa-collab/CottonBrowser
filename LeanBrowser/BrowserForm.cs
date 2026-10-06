@@ -61,6 +61,8 @@ public sealed partial class BrowserForm : Form
     private bool _overflowAwaitingRelease;
     private readonly ToolTip _zoomTip = new();
     private readonly BrowserUpdateService _updates = new(stagingRoot: Path.Combine(BrowserPaths.DataDirectory, "Updates"));
+    private readonly UpdateCheckHistoryStore _updateChecks = new(Path.Combine(BrowserPaths.ThemeDirectory, "update-check.json"));
+    private UpdateCheckHistory? _updateCheckHistory;
     private readonly CancellationTokenSource _updateLifetime = new();
     private readonly System.Windows.Forms.Timer _updatePoll = new() { Interval = 3 * 60 * 60 * 1000 };
     private readonly BrowserMenuItem _updateItem = new("Atualizar CottonBrowser", "\uE895");
@@ -138,6 +140,7 @@ public sealed partial class BrowserForm : Form
         BrowserWindowSession? restoredSession = null)
     {
         _restoredSession = restoredSession;
+        _updateCheckHistory = _updateChecks.Load();
         _initialUrl = string.IsNullOrWhiteSpace(initialUrl) ? HomePage : initialUrl;
         _initialIsPrivate = initialIsPrivate;
         _tabView.TabDraggedOutside += OnTabDraggedOutside;
@@ -576,6 +579,8 @@ public sealed partial class BrowserForm : Form
         browserCenter.Click += async (_, _) => await OpenTabAsync(TrustedBrowserBridge.UiUrl);
         var configuration = new BrowserMenuItem("Configurações", "\uE713");
         configuration.Click += (_, _) => OpenSettings();
+        var about = new BrowserMenuItem("Sobre e atualizações", "\uE946");
+        about.Click += (_, _) => OpenAboutUpdates();
         var userName = _access.UserName.Split('\\').Last();
         var profile = new BrowserMenuItem("Perfil")
         {
@@ -655,7 +660,7 @@ public sealed partial class BrowserForm : Form
         _overflowMenu.Items.AddRange(new ToolStripItem[] { _updateBanner, newTab, newWindow, privateTab, reopen, searchTabs,
             new ToolStripSeparator(), profile, history, downloads, media, favorites, protection, browserCenter,
             new ToolStripSeparator(), _menuZoom, new ToolStripSeparator(), print, find, inspect,
-            new ToolStripSeparator(), configuration, _updateItem, exit });
+            new ToolStripSeparator(), configuration, about, _updateItem, exit });
         _overflowMenu.Opening += (_, _) =>
         {
             var ready = ActiveBrowserTab?.Navigation.IsReady == true;
@@ -951,10 +956,35 @@ public sealed partial class BrowserForm : Form
             _settingsTab.ConfigureBookmarks(_bookmarks, RefreshBookmarksBar);
             _settingsTab.HistoryEntrySelected += async url => await OpenTabAsync(url);
             _settingsTab.BrowserCenterRequested += async () => await OpenTabAsync(TrustedBrowserBridge.UiUrl);
+            _settingsTab.UpdateCheckRequested += async () => await CheckForUpdatesAsync(manual: false);
+            _settingsTab.UpdateInstallRequested += async () =>
+            {
+                if (_availableUpdate is { } update) await InstallUpdateAsync(update);
+            };
             _tabView.TabPages.Add(_settingsTab);
         }
+        RefreshAboutUpdates();
         _settingsTab.ReloadBookmarks();
         _tabView.SelectedTab = _settingsTab;
+    }
+
+    private void OpenAboutUpdates()
+    {
+        OpenSettings();
+        _settingsTab?.ShowAboutUpdates();
+    }
+
+    private static Version InstalledVersion => typeof(BrowserForm).Assembly.GetName().Version ?? new Version(1, 0, 0, 0);
+
+    private void RefreshAboutUpdates() => _settingsTab?.ConfigureUpdates(
+        InstalledVersion, _updateCheckHistory, _availableUpdate, _updateBusy,
+        _updateBusy ? _updateItem.Text : null);
+
+    private void RememberUpdateCheck(bool succeeded)
+    {
+        _updateCheckHistory = new UpdateCheckHistory(DateTimeOffset.UtcNow, succeeded,
+            succeeded ? _updates.LatestRelease : _updateCheckHistory?.Release);
+        _updateChecks.Save(_updateCheckHistory);
     }
 
     private void AddSettingsBookmark() => WithBookmarkErrors(() =>
@@ -1421,11 +1451,12 @@ public sealed partial class BrowserForm : Form
         _updateBusy = true;
         _updateItem.Enabled = false;
         _updateItem.Text = "Verificando atualizações...";
+        RefreshAboutUpdates();
         try
         {
-            var current = typeof(BrowserForm).Assembly.GetName().Version ?? new Version(1, 0, 0, 0);
-            var update = await _updates.CheckAsync(current, _updateLifetime.Token);
+            var update = await _updates.CheckAsync(InstalledVersion, _updateLifetime.Token);
             if (IsDisposed) return null;
+            RememberUpdateCheck(succeeded: true);
             _availableUpdate = update;
             if (update is null) _updateNotice.Hide();
             _updateItem.Text = update is null
@@ -1443,6 +1474,7 @@ public sealed partial class BrowserForm : Form
         }
         catch (Exception ex)
         {
+            RememberUpdateCheck(succeeded: false);
             _availableUpdate = null;
             _updateNotice.Hide();
             if (manual && !IsDisposed)
@@ -1460,6 +1492,7 @@ public sealed partial class BrowserForm : Form
                     _updateItem.Text = _availableUpdate is null
                         ? "Atualizar CottonBrowser"
                         : $"Atualização disponível ({_availableUpdate.Tag})";
+                RefreshAboutUpdates();
             }
         }
     }
@@ -1480,11 +1513,16 @@ public sealed partial class BrowserForm : Form
         _updateBusy = true;
         _updateItem.Enabled = false;
         _updateItem.Text = "Baixando atualização...";
+        RefreshAboutUpdates();
         try
         {
             var progress = new Progress<int>(percent =>
             {
-                if (!IsDisposed) _updateItem.Text = $"Baixando atualização... {percent}%";
+                if (!IsDisposed)
+                {
+                    _updateItem.Text = $"Baixando atualização... {percent}%";
+                    RefreshAboutUpdates();
+                }
             });
             var package = await _updates.DownloadAsync(update, progress, _updateLifetime.Token);
             if (IsDisposed) return;
@@ -1516,6 +1554,7 @@ public sealed partial class BrowserForm : Form
             {
                 _updateItem.Enabled = true;
                 _updateItem.Text = $"Atualização disponível ({update.Tag})";
+                RefreshAboutUpdates();
             }
         }
     }

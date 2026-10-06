@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="..\LeanBrowser\BrowserUpdateService.cs" Link="BrowserUpdateService.cs" />
     <Compile Include="..\LeanBrowser\UpdateNoticePreferenceStore.cs" Link="UpdateNoticePreferenceStore.cs" />
+    <Compile Include="..\LeanBrowser\UpdateCheckHistoryStore.cs" Link="UpdateCheckHistoryStore.cs" />
   </ItemGroup>
 </Project>
