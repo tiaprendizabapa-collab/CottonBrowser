@@ -27,7 +27,7 @@ Fechar a última aba encerra a janela. Links HTTP/HTTPS que solicitam uma nova j
 | Ctrl+Tab / Ctrl+Shift+Tab | Próxima / anterior |
 | Ctrl+D | Adicionar ou atualizar favorito da página |
 | Ctrl+J | Abrir o gestor de downloads |
-| Ctrl++ / Ctrl+- / Ctrl+0 | Aumentar, diminuir ou repor o zoom da aba |
+| Ctrl++ / Ctrl+- / Ctrl+0 | Aumentar, diminuir ou repor o zoom do site; salvo por domínio no perfil, inclusive após reiniciar |
 | Lupa / menu de três pontos | Redefinir o zoom para 100% |
 | Favoritos | Adicionar, remover a página atual ou abrir links salvos |
 | Configurações → Histórico | Consultar, pesquisar e apagar visitas dentro das configurações, sem abrir outra aba |
@@ -42,8 +42,9 @@ Ao digitar um endereço conhecido, a barra completa o domínio e destaca a parte
 - Favoritos: `%LOCALAPPDATA%\LeanBrowser\bookmarks.json`.
 - Histórico de visitas e sugestões da barra: `%LOCALAPPDATA%\LeanBrowser\history.json` (até 10.000 visitas).
 - Sessão de abas normais: `%LOCALAPPDATA%\LeanBrowser\session.json` (URLs, títulos e organização; sem formulários nem abas anônimas).
-- Preferências de inicialização, memória e buscador: `%LOCALAPPDATA%\LeanBrowser\preferences.json`.
+- Preferências de inicialização, memória, buscador e zoom por domínio: `%LOCALAPPDATA%\LeanBrowser\preferences.json`. Na primeira abertura, valores do antigo `site-zoom.json` são importados; o arquivo antigo só é removido após salvar as preferências com sucesso.
 - Perfil WebView2, incluindo dados de login: `%LOCALAPPDATA%\LeanBrowser\WebView2`.
+- Preferências dos sites (cookies persistentes, localStorage e IndexedDB) permanecem no perfil WebView2 e voltam automaticamente na próxima visita. Permissões de câmera, microfone, localização e notificações são lembradas por origem após decisão explícita; abas anônimas não as persistem. Cookies de sessão e dados temporários seguem a validade definida pelo site.
 
 Esses caminhos pertencem ao perfil padrão, preservado para compatibilidade.
 Perfis novos usam `%LOCALAPPDATA%\LeanBrowser\Profiles\<id>` para dados,

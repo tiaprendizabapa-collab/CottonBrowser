@@ -97,7 +97,7 @@ Quando o menu de três pontos ultrapassa a altura da janela, use a roda do
 mouse para subir ou descer pelas opções. A rolagem também funciona sobre
 os botões de zoom e nos submenus, respeitando os limites do menu.
 
-Recarregar com `F5`, `Ctrl+R` ou o botão de recarga mantém o zoom da aba,
+Recarregar com `F5`, `Ctrl+R` ou o botão de recarga mantém o zoom do site,
 inclusive o zoom alterado com `Ctrl` e a roda do mouse. O áudio silenciado,
 os grupos e a tela dividida também são preservados. No modo de leitura,
 recarregar a mesma página atualiza o texto e mantém a fonte, o espaçamento
@@ -240,12 +240,20 @@ guias anônimas.
 | Histórico de sugestões | `%LOCALAPPDATA%\LeanBrowser\history.json` |
 | Histórico de downloads | `%LOCALAPPDATA%\LeanBrowser\downloads.json` |
 | Sessão de abas normais | `%LOCALAPPDATA%\LeanBrowser\session.json` |
-| Inicialização, desempenho e buscador | `%LOCALAPPDATA%\LeanBrowser\preferences.json` |
+| Inicialização, desempenho, buscador e zoom por site | `%LOCALAPPDATA%\LeanBrowser\preferences.json` |
 | Perfil WebView2, cookies e logins | `%LOCALAPPDATA%\LeanBrowser\WebView2` |
 
 Os diretórios de dados mantêm o nome `LeanBrowser`. O perfil pertence ao
 CottonBrowser e é separado do perfil pessoal do Edge. Instalações e
 atualizações preservam esses dados.
+
+Em abas normais, as preferências que o site grava em cookies persistentes,
+localStorage e IndexedDB são restauradas automaticamente ao voltar ao site,
+inclusive depois de fechar o navegador. O zoom é salvo por domínio. Decisões
+sobre câmera, microfone, localização e notificações são lembradas por origem
+após a confirmação no navegador. Abas anônimas não gravam essas decisões no
+perfil permanente. Dados que o próprio site marca como temporários expiram
+conforme as regras do site.
 
 No modo avançado, a exclusão de senhas salvas exige confirmação. Ela não
 encerra sessões autenticadas nem limpa campos já preenchidos. Mais detalhes

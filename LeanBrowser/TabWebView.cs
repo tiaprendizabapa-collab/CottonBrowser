@@ -9,50 +9,66 @@ namespace LeanBrowser;
 /// </summary>
 public sealed class TabWebView : WebView2
 {
-    private double _pageZoom = 1;
-    private ulong? _navigationId;
-    private bool _applyingZoom;
+    private readonly Dictionary<string, double> _privateSiteZoom = new(StringComparer.OrdinalIgnoreCase);
+    private bool _restoringZoom;
+    private bool _navigating;
 
     public TabWebView()
     {
         CoreWebView2InitializationCompleted += (_, args) =>
         {
-            if (!args.IsSuccess) return;
-            _pageZoom = ZoomFactor;
-            CoreWebView2.NavigationStarting += (_, args) => _navigationId = args.NavigationId;
-            // Chromium can reset a user-applied Ctrl+wheel zoom while loading.
-            // Restore before layout and again at completion, without recording
-            // that automatic reset as the user's new preference.
-            CoreWebView2.ContentLoading += (_, args) =>
+            if (!args.IsSuccess || CoreWebView2 is not { } core) return;
+            core.NavigationStarting += (_, navigation) => { if (!navigation.Cancel) _navigating = true; };
+            core.SourceChanged += (_, _) => RestoreSiteZoom();
+            core.ContentLoading += (_, _) =>
             {
-                if (_navigationId == args.NavigationId) ApplyPageZoom();
+                RestoreSiteZoom();
+                _navigating = false;
             };
-            CoreWebView2.NavigationCompleted += (_, args) =>
+            core.NavigationCompleted += (_, _) =>
             {
-                if (_navigationId != args.NavigationId) return;
-                ApplyPageZoom();
-                _navigationId = null;
+                RestoreSiteZoom();
+                _navigating = false;
+            };
+            ZoomFactorChanged += (_, _) =>
+            {
+                if (!_restoringZoom && !_navigating) SaveSiteZoom();
             };
         };
-        ZoomFactorChanged += (_, _) =>
+    }
+
+    public void SaveSiteZoom()
+    {
+        if (CoreWebView2 is not { } core
+            || !BrowserPreferences.TryGetZoomHost(core.Source, out var host)) return;
+        if (core.Profile.IsInPrivateModeEnabled)
         {
-            if (!_applyingZoom && _navigationId is null) _pageZoom = ZoomFactor;
-        };
+            if (ZoomFactor == 1) _privateSiteZoom.Remove(host);
+            else _privateSiteZoom[host] = ZoomFactor;
+        }
+        else BrowserPreferences.Current.SetSiteZoom(core.Source, ZoomFactor);
     }
 
     public void SetPageZoom(double factor)
     {
         if (!double.IsFinite(factor) || factor <= 0) throw new ArgumentOutOfRangeException(nameof(factor));
-        _pageZoom = factor;
-        ApplyPageZoom();
+        ZoomFactor = factor;
+        SaveSiteZoom();
     }
 
-    private void ApplyPageZoom()
+    private void RestoreSiteZoom()
     {
-        if (IsDisposed || CoreWebView2 is null) return;
-        _applyingZoom = true;
-        try { ZoomFactor = _pageZoom; }
-        finally { _applyingZoom = false; }
+        if (CoreWebView2 is not { } core) return;
+        _restoringZoom = true;
+        try
+        {
+            var factor = core.Profile.IsInPrivateModeEnabled
+                ? BrowserPreferences.TryGetZoomHost(core.Source, out var host)
+                    && _privateSiteZoom.TryGetValue(host, out var privateFactor) ? privateFactor : 1
+                : BrowserPreferences.Current.GetSiteZoom(core.Source);
+            if (Math.Abs(ZoomFactor - factor) > 0.0001) ZoomFactor = factor;
+        }
+        finally { _restoringZoom = false; }
     }
 
     public void SynchronizeVisibility() => base.OnVisibleChanged(EventArgs.Empty);
