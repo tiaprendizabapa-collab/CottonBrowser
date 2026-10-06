@@ -6,16 +6,17 @@ namespace LeanBrowser;
 
 /// <summary>
 /// Default-deny permission gate. Camera, microphone, location, and browser
-/// notifications are granted only once after an explicit decision in a
-/// native browser prompt. No decision is written into the WebView2 profile.
+/// notifications require an explicit decision, then remember it per origin
+/// in a regular profile. Private decisions are never persisted.
 /// </summary>
 public sealed class PermissionPolicy : IDisposable
 {
     private static readonly TimeSpan ConsentTimeout = TimeSpan.FromSeconds(30);
     private readonly ConcurrentDictionary<Guid, PendingPermission> _pending = new();
     private readonly ConcurrentDictionary<string, Guid> _pendingByOriginAndKind = new(StringComparer.Ordinal);
-    private readonly object _resetLock = new();
-    private Task? _resetPersistedPermissions;
+    private readonly object _loadLock = new();
+    private readonly ConcurrentDictionary<string, CoreWebView2PermissionState> _saved = new(StringComparer.Ordinal);
+    private Task? _loadPersistedPermissions;
     private int _disposed;
 
     public event Action<PermissionPrompt>? PromptCreated;
@@ -28,12 +29,12 @@ public sealed class PermissionPolicy : IDisposable
         return new Subscription(this, core);
     }
 
-    /// <summary>Removes legacy persisted grants before any tab is allowed to navigate.</summary>
-    public Task ResetPersistedPermissionsAsync(CoreWebView2Profile profile)
+    /// <summary>Loads existing decisions before the first tab navigates.</summary>
+    public Task LoadPersistedPermissionsAsync(CoreWebView2Profile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        lock (_resetLock)
-            return _resetPersistedPermissions ??= ResetPersistedPermissionsCoreAsync(profile);
+        lock (_loadLock)
+            return _loadPersistedPermissions ??= LoadPersistedPermissionsCoreAsync(profile);
     }
 
     public IReadOnlyList<PermissionPrompt> GetPending() =>
@@ -50,18 +51,18 @@ public sealed class PermissionPolicy : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         foreach (var pending in _pending.Values)
-            pending.Decision.TrySetResult(false);
+            pending.Decision.TrySetResult(null);
     }
 
-    private static async Task ResetPersistedPermissionsCoreAsync(CoreWebView2Profile profile)
+    private async Task LoadPersistedPermissionsCoreAsync(CoreWebView2Profile profile)
     {
         var settings = await profile.GetNonDefaultPermissionSettingsAsync();
-        foreach (var setting in settings.Where(setting => IsConsentEligible(setting.PermissionKind)))
+        foreach (var setting in settings)
         {
-            await profile.SetPermissionStateAsync(
-                setting.PermissionKind,
-                setting.PermissionOrigin,
-                CoreWebView2PermissionState.Default);
+            if (IsConsentEligible(setting.PermissionKind)
+                && TryGetSecureOrigin(setting.PermissionOrigin, out var origin)
+                && setting.PermissionState is CoreWebView2PermissionState.Allow or CoreWebView2PermissionState.Deny)
+                _saved[PermissionKey("regular", origin, setting.PermissionKind)] = setting.PermissionState;
         }
     }
 
@@ -73,17 +74,23 @@ public sealed class PermissionPolicy : IDisposable
 
         if (Volatile.Read(ref _disposed) != 0
             || !IsConsentEligible(args.PermissionKind)
-            || !args.IsUserInitiated
             || !TryGetSecureOrigin(args.Uri, out var origin))
             return;
 
-        var profileScope = core.Profile.IsInPrivateModeEnabled ? "private" : "regular";
-        var key = profileScope + "|" + origin + "|" + args.PermissionKind;
+        var isPrivate = core.Profile.IsInPrivateModeEnabled;
+        var key = PermissionKey(isPrivate ? "private" : "regular", origin, args.PermissionKind);
+        if (!isPrivate && _saved.TryGetValue(key, out var savedState))
+        {
+            args.State = savedState;
+            return;
+        }
+        if (!args.IsUserInitiated) return;
         if (_pendingByOriginAndKind.TryGetValue(key, out var activeRequestId)
             && _pending.TryGetValue(activeRequestId, out var activePending))
         {
             var sharedDeferral = args.GetDeferral();
-            _ = CompleteWithDecisionAsync(args, sharedDeferral, activePending.Decision.Task);
+            _ = CompleteWithDecisionAsync(args, sharedDeferral, activePending.Decision.Task,
+                saveInProfile: !isPrivate, key: key);
             return;
         }
 
@@ -97,7 +104,7 @@ public sealed class PermissionPolicy : IDisposable
             core,
             key,
             prompt,
-            new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+            new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously));
 
         if (!_pending.TryAdd(requestId, pending)
             || !_pendingByOriginAndKind.TryAdd(key, requestId))
@@ -107,7 +114,7 @@ public sealed class PermissionPolicy : IDisposable
         }
 
         var deferral = args.GetDeferral();
-        _ = CompleteWhenResolvedAsync(args, deferral, pending);
+        _ = CompleteWhenResolvedAsync(args, deferral, pending, !isPrivate);
 
         try
         {
@@ -115,14 +122,15 @@ public sealed class PermissionPolicy : IDisposable
         }
         catch
         {
-            pending.Decision.TrySetResult(false);
+            pending.Decision.TrySetResult(null);
         }
     }
 
     private async Task CompleteWhenResolvedAsync(
         CoreWebView2PermissionRequestedEventArgs args,
         CoreWebView2Deferral deferral,
-        PendingPermission pending)
+        PendingPermission pending,
+        bool saveInProfile)
     {
         try
         {
@@ -130,7 +138,9 @@ public sealed class PermissionPolicy : IDisposable
                 args,
                 deferral,
                 pending.Decision.Task,
-                () => pending.Decision.TrySetResult(false));
+                saveInProfile,
+                pending.Key,
+                () => pending.Decision.TrySetResult(null));
         }
         finally
         {
@@ -139,16 +149,20 @@ public sealed class PermissionPolicy : IDisposable
         }
     }
 
-    private static async Task CompleteWithDecisionAsync(
+    private async Task CompleteWithDecisionAsync(
         CoreWebView2PermissionRequestedEventArgs args,
         CoreWebView2Deferral deferral,
-        Task<bool> decision,
+        Task<bool?> decision,
+        bool saveInProfile,
+        string key,
         Action? onTimeout = null)
     {
+        var decided = false;
         try
         {
             var allow = await decision.WaitAsync(ConsentTimeout);
-            args.State = allow ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+            args.State = allow == true ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+            decided = allow.HasValue;
         }
         catch (TimeoutException)
         {
@@ -158,15 +172,19 @@ public sealed class PermissionPolicy : IDisposable
         finally
         {
             args.Handled = true;
-            args.SavesInProfile = false;
+            args.SavesInProfile = decided && saveInProfile;
+            if (args.SavesInProfile) _saved[key] = args.State;
             deferral.Complete();
         }
     }
 
+    private static string PermissionKey(string scope, string origin, CoreWebView2PermissionKind kind) =>
+        scope + "|" + origin + "|" + kind;
+
     private void DenyRequestsFor(CoreWebView2 core)
     {
         foreach (var pending in _pending.Values.Where(pending => ReferenceEquals(pending.Core, core)))
-            pending.Decision.TrySetResult(false);
+            pending.Decision.TrySetResult(null);
     }
 
     private static bool IsConsentEligible(CoreWebView2PermissionKind kind) => kind is
@@ -193,7 +211,7 @@ public sealed class PermissionPolicy : IDisposable
         CoreWebView2 Core,
         string Key,
         PermissionPrompt Prompt,
-        TaskCompletionSource<bool> Decision);
+        TaskCompletionSource<bool?> Decision);
 
     private sealed class Subscription : IDisposable
     {
