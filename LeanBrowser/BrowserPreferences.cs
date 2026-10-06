@@ -148,7 +148,7 @@ public sealed class BrowserPreferences
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")
             || uri.Host.Length == 0) return false;
         host = uri.IdnHost.TrimEnd('.').ToLowerInvariant();
-        return host.Length != 0 && host != TrustedBrowserBridge.HostName;
+        return host.Length != 0 && host != "app.cottonbrowser.test";
     }
 
     private static bool IsValidZoom(double factor) => double.IsFinite(factor) && factor is >= 0.25 and <= 5;
