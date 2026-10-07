@@ -14,6 +14,7 @@ public sealed class BrowserTab : TabPage
     public string? GroupName { get => _groupName; set { if (_groupName == value) return; _groupName = value; OrganizationChanged?.Invoke(); } }
     public int GroupColorArgb { get => _groupColorArgb; set { if (_groupColorArgb == value) return; _groupColorArgb = value; OrganizationChanged?.Invoke(); } }
     public bool IsSuspended { get; set; }
+    public bool IsFloatingVideo { get; set; }
     public DateTimeOffset LastActivatedAt { get; set; } = DateTimeOffset.UtcNow;
     public string LastKnownUrl { get; internal set; } = "about:blank";
     public bool IsPrivate { get; }

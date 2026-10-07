@@ -17,6 +17,22 @@ public sealed class PermissionPolicy : IDisposable
     private readonly object _resetLock = new();
     private Task? _resetPersistedPermissions;
     private int _disposed;
+    private static readonly ConcurrentDictionary<string, bool> _blocked = new();
+    private static readonly ConcurrentDictionary<string, bool> _lastDecisions = new();
+
+    private static string RuleKey(string origin, string kind, bool isPrivate) => (isPrivate ? "private|" : "regular|") + origin + "|" + kind;
+    public bool IsBlocked(string origin, string kind, bool isPrivate) => _blocked.ContainsKey(RuleKey(origin, kind, isPrivate));
+    public bool? LastDecision(string origin, string kind, bool isPrivate) => _lastDecisions.TryGetValue(RuleKey(origin, kind, isPrivate), out var allow) ? allow : null;
+    public void SetBlocked(string origin, string kind, bool isPrivate, bool blocked)
+    {
+        var key = RuleKey(origin, kind, isPrivate);
+        if (blocked)
+        {
+            _blocked[key] = true; _lastDecisions[key] = false;
+            foreach (var pending in _pending.Values.Where(p => p.Key == key)) pending.Decision.TrySetResult(false);
+        }
+        else _blocked.TryRemove(key, out _);
+    }
 
     public event Action<PermissionPrompt>? PromptCreated;
 
@@ -79,11 +95,13 @@ public sealed class PermissionPolicy : IDisposable
 
         var profileScope = core.Profile.IsInPrivateModeEnabled ? "private" : "regular";
         var key = profileScope + "|" + origin + "|" + args.PermissionKind;
+        if (_blocked.ContainsKey(key)) return;
         if (_pendingByOriginAndKind.TryGetValue(key, out var activeRequestId)
             && _pending.TryGetValue(activeRequestId, out var activePending))
         {
             var sharedDeferral = args.GetDeferral();
-            _ = CompleteWithDecisionAsync(args, sharedDeferral, activePending.Decision.Task);
+            _ = CompleteWithDecisionAsync(args, sharedDeferral, activePending.Decision.Task,
+                filter: allow => RecordDecision(key, allow));
             return;
         }
 
@@ -130,7 +148,7 @@ public sealed class PermissionPolicy : IDisposable
                 args,
                 deferral,
                 pending.Decision.Task,
-                () => pending.Decision.TrySetResult(false));
+                () => pending.Decision.TrySetResult(false), allow => RecordDecision(pending.Key, allow));
         }
         finally
         {
@@ -143,16 +161,18 @@ public sealed class PermissionPolicy : IDisposable
         CoreWebView2PermissionRequestedEventArgs args,
         CoreWebView2Deferral deferral,
         Task<bool> decision,
-        Action? onTimeout = null)
+        Action? onTimeout = null, Func<bool, bool>? filter = null)
     {
         try
         {
             var allow = await decision.WaitAsync(ConsentTimeout);
+            if (filter is not null) allow = filter(allow);
             args.State = allow ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
         }
         catch (TimeoutException)
         {
             onTimeout?.Invoke();
+            filter?.Invoke(false);
             args.State = CoreWebView2PermissionState.Deny;
         }
         finally
@@ -167,6 +187,13 @@ public sealed class PermissionPolicy : IDisposable
     {
         foreach (var pending in _pending.Values.Where(pending => ReferenceEquals(pending.Core, core)))
             pending.Decision.TrySetResult(false);
+    }
+
+    private bool RecordDecision(string key, bool allow)
+    {
+        allow = allow && !_blocked.ContainsKey(key) && Volatile.Read(ref _disposed) == 0;
+        _lastDecisions[key] = allow;
+        return allow;
     }
 
     private static bool IsConsentEligible(CoreWebView2PermissionKind kind) => kind is

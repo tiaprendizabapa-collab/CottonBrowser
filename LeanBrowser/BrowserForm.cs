@@ -687,6 +687,7 @@ public sealed partial class BrowserForm : Form
             NotifySessionChanged();
         };
         InstallFeatureMenus();
+        InstallProductivityMenus();
     }
 
     private void PaintOverflowButton(Graphics g)
@@ -961,6 +962,7 @@ public sealed partial class BrowserForm : Form
             {
                 if (_availableUpdate is { } update) await InstallUpdateAsync(update);
             };
+            ConfigureProductivitySettings(_settingsTab);
             _tabView.TabPages.Add(_settingsTab);
         }
         RefreshAboutUpdates();
@@ -1035,6 +1037,14 @@ public sealed partial class BrowserForm : Form
         var url = tab?.Web.CoreWebView2?.Source;
         if (tab is null || !MediaDownloadService.IsSupportedPageUrl(url)) return;
 
+        var mediaDirectory = DownloadPreferencesView.Folder();
+        if (BrowserPreferences.Current.AskDownloadLocation)
+        {
+            using var folder = new FolderBrowserDialog { Description = "Onde salvar esta mídia", UseDescriptionForTitle = true, SelectedPath = mediaDirectory };
+            if (folder.ShowDialog(this) != DialogResult.OK) return;
+            mediaDirectory = folder.SelectedPath;
+        }
+
         if (!_mediaDownloadService.ToolsReady(kind))
         {
             const string size = "até 260 MB";
@@ -1052,7 +1062,7 @@ public sealed partial class BrowserForm : Form
         var startedAt = DateTimeOffset.Now;
         DownloadEntry? entry = tab.IsPrivate ? null : new DownloadEntry(
             Guid.NewGuid(), kind == MediaDownloadKind.Video ? "Preparando vídeo" : "Preparando áudio",
-            url!, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
+            url!, mediaDirectory,
             0, -1, DownloadStatus.InProgress, null, startedAt, null);
         if (entry is not null)
         {
@@ -1081,7 +1091,7 @@ public sealed partial class BrowserForm : Form
 
         try
         {
-            var result = await _mediaDownloadService.DownloadAsync(url!, kind, progress, cancellation.Token);
+            var result = await _mediaDownloadService.DownloadAsync(url!, kind, progress, cancellation.Token, mediaDirectory);
             finished = true;
             if (!dialog.IsDisposed) dialog.MarkCompleted(result.FilePath);
             if (entry is not null)
@@ -1640,6 +1650,7 @@ public sealed partial class BrowserForm : Form
             () => Application.OpenForms.OfType<BrowserForm>().Any(form => form.HasActiveDownloads()));
         _tabs.InitializeTabAsync = async tab =>
         {
+            ConfigureSiteZoom(tab);
             tab.NetworkProtection = new NetworkProtection(
                 tab.Web,
                 _urlReputation,
@@ -1875,7 +1886,7 @@ public sealed partial class BrowserForm : Form
             if (IsDisposed || !IsHandleCreated) return;
             BeginInvoke(new Action(() =>
             {
-                if (!IsDisposed && !tab.IsDisposed && ActiveBrowserTab == tab)
+                if (!IsDisposed && !tab.IsDisposed && !tab.IsFloatingVideo && ActiveBrowserTab == tab)
                     SynchronizeFullscreen();
             }));
         };
@@ -1910,11 +1921,29 @@ public sealed partial class BrowserForm : Form
     }
 
     private void OnDownloadStarting(object? sender, CoreWebView2DownloadStartingEventArgs args)
+        => DeferDownload(args, () => PrepareDownload(args));
+
+    private void DeferDownload(CoreWebView2DownloadStartingEventArgs args, Action prepare)
+    {
+        var deferral = args.GetDeferral(); args.Handled = true;
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                try { if (IsDisposed || Disposing) args.Cancel = true; else prepare(); }
+                finally { deferral.Complete(); }
+            }));
+        }
+        catch (InvalidOperationException) { args.Cancel = true; deferral.Complete(); }
+    }
+
+    private void PrepareDownload(CoreWebView2DownloadStartingEventArgs args)
     {
         try
         {
             var operation = args.DownloadOperation;
-            var resultPath = ChooseDownloadPath(args.ResultFilePath, operation.Uri);
+            var resultPath = PromptDownloadPath(args.ResultFilePath, operation.Uri);
+            if (resultPath is null) { args.Cancel = true; return; }
             args.ResultFilePath = resultPath;
             args.Handled = true;
 
@@ -1948,10 +1977,15 @@ public sealed partial class BrowserForm : Form
     }
 
     private void OnPrivateDownloadStarting(CoreWebView2DownloadStartingEventArgs args)
+        => DeferDownload(args, () => PreparePrivateDownload(args));
+
+    private void PreparePrivateDownload(CoreWebView2DownloadStartingEventArgs args)
     {
         try
         {
-            args.ResultFilePath = ChooseDownloadPath(args.ResultFilePath, args.DownloadOperation.Uri);
+            var resultPath = PromptDownloadPath(args.ResultFilePath, args.DownloadOperation.Uri);
+            if (resultPath is null) { args.Cancel = true; return; }
+            args.ResultFilePath = resultPath;
             args.Handled = true;
             var operation = args.DownloadOperation;
             _privateDownloads.Add(operation);
@@ -2033,8 +2067,7 @@ public sealed partial class BrowserForm : Form
 
     private static string ChooseDownloadPath(string suggestedPath, string sourceUrl)
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        var directory = DownloadPreferencesView.Folder();
         Directory.CreateDirectory(directory);
 
         var fileName = Path.GetFileName(suggestedPath);
@@ -2053,6 +2086,15 @@ public sealed partial class BrowserForm : Form
             candidate = Path.Combine(directory, $"{stem} ({suffix++}){extension}");
         }
         return candidate;
+    }
+
+    private string? PromptDownloadPath(string suggestedPath, string sourceUrl)
+    {
+        var candidate = ChooseDownloadPath(suggestedPath, sourceUrl);
+        if (!BrowserPreferences.Current.AskDownloadLocation) return candidate;
+        using var dialog = new SaveFileDialog { FileName = Path.GetFileName(candidate), InitialDirectory = Path.GetDirectoryName(candidate),
+            Filter = "Todos os arquivos (*.*)|*.*", OverwritePrompt = true };
+        return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
     }
 
     private static string SanitizeDownloadFileName(string? fileName)
@@ -2464,6 +2506,11 @@ public sealed partial class BrowserForm : Form
 
     private void OnWebKeyDown(object? sender, KeyEventArgs e)
     {
+        if (sender is TabWebView { Parent: FloatingVideoWindow floating })
+        {
+            if (floating.HandleVideoShortcut(e.KeyData)) { e.Handled = true; e.SuppressKeyPress = true; }
+            return;
+        }
         var key = e.KeyCode;
         var ctrl = e.Control;
         var shift = e.Shift;
@@ -2478,6 +2525,8 @@ public sealed partial class BrowserForm : Form
             || key is Keys.F5 or Keys.F11 or Keys.F12
             || (key == Keys.Escape && !ActivePageIsFullscreen() && (_browserFullscreen || _loading));
 
+        var data = key | (ctrl ? Keys.Control : Keys.None) | (shift ? Keys.Shift : Keys.None) | (alt ? Keys.Alt : Keys.None);
+        isShortcut |= IsCustomShortcut(data);
         if (!isShortcut) return;
 
         e.Handled = true;
@@ -2499,6 +2548,9 @@ public sealed partial class BrowserForm : Form
 
     private bool HandleShortcut(Keys key, bool ctrl, bool shift, bool alt)
     {
+        var data = key | (ctrl ? Keys.Control : Keys.None) | (shift ? Keys.Shift : Keys.None) | (alt ? Keys.Alt : Keys.None);
+        if (HandleCustomShortcut(data)) return true;
+        if (ShortcutCatalog.Commands.Any(c => c.Default == data)) return false;
         switch (key)
         {
             case Keys.F12 when !ctrl && !shift && !alt:

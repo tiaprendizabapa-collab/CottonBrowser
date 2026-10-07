@@ -287,6 +287,7 @@ public sealed class FavoriteButton : Control
 /// </summary>
 public sealed class Omnibox : Panel
 {
+    public event Action? SiteControlsRequested;
     public readonly TextBox Input = new();
     public readonly FavoriteButton Favorite = new();
     public readonly ZoomBadge Zoom = new();
@@ -327,7 +328,9 @@ public sealed class Omnibox : Panel
         _shield.ForeColor = Theme.InkMuted;
         _shield.BackColor = Color.Transparent;
         _shield.Text = "\uE72E"; // cadeado
-        _shield.Cursor = Cursors.Default;
+        _shield.Cursor = Cursors.Hand;
+        _shield.AccessibleName = "Permissões e dados do site";
+        _shield.Click += (_, _) => SiteControlsRequested?.Invoke();
 
         Input.BorderStyle = BorderStyle.None;
         Input.Dock = DockStyle.Fill;

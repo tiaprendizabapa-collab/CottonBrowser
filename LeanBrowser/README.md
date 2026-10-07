@@ -4,6 +4,21 @@ Navegador para Windows desenvolvido em C# / .NET 8 / WinForms, com o motor
 Microsoft Edge WebView2. Inclui abas, favoritos, downloads, perfis de navegação
 e proteção de anúncios por extensão, filtros de rede e scripts de página.
 
+## Organização e controles
+
+- **Zoom por site:** o tamanho escolhido com o menu ou Ctrl+/Ctrl− é salvo neste perfil e recuperado após reiniciar. Em abas anônimas, o ajuste é temporário. Redefina os sites em Configurações > Aparência.
+- **Vídeo flutuante:** use o menu de três pontos ou Ctrl+Shift+Y com um vídeo carregado na página. A janela fica sobre os outros programas e usa a mesma reprodução. Ao fechá-la, a página retorna à aba; navegar também encerra a janela.
+- **Espaços de trabalho:** salve e nomeie conjuntos de até 200 abas normais em Configurações > Espaços de trabalho. Abrir um espaço acrescenta suas abas, preservando as atuais, os grupos, as abas fixadas e o estado de áudio.
+- **Permissões do site:** clique no cadeado para consultar o último pedido e bloquear câmera, microfone, localização ou notificações durante a sessão. Bloquear recarrega as abas desse endereço para encerrar o uso. A mesma tela pode apagar cookies aplicáveis ao site.
+- **Limpeza de dados:** Configurações > Privacidade e proteção permite escolher histórico, cookies/dados dos sites e cache, da última hora, 24 horas, sete dias ou de todo o período. Senhas e favoritos são mantidos.
+- **Downloads:** selecione uma pasta padrão e a opção de perguntar o destino em Configurações > Downloads. Downloads de mídia também respeitam a pasta escolhida.
+- **Backup:** exporte ou restaure favoritos, pastas, preferências, tema, atalhos, zoom, espaços e lista de leitura em Configurações > Backup e restauração. Cookies, histórico e senhas não são exportados. Antes de restaurar, uma cópia dos dados anteriores fica na pasta Backups do perfil.
+- **Atalhos:** altere dez comandos em Configurações > Atalhos. Combinações usadas para navegação, edição e outros comandos são protegidas contra conflitos.
+- **Lista de leitura:** salve a página visitada antes de abrir as configurações, marque leituras concluídas e escreva anotações. Abas anônimas não são incluídas.
+- **Desempenho:** o menu oferece memória e CPU do navegador e ações para retomar, fechar ou suspender uma aba inativa. Formulários alterados, mídia, downloads e chamadas impedem a suspensão. Processos compartilhados não têm seu consumo atribuído artificialmente a uma única aba.
+
+Os espaços e as leituras ficam em `productivity.json` na pasta de dados do perfil. O backup tem limite de 12 MB e valida todos os arquivos antes de alterar os dados.
+
 ## Instalar em outro computador
 
 Envie somente `CottonBrowserSetup.exe`. O instalador contém o navegador, o

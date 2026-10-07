@@ -159,9 +159,17 @@ public sealed class TabMemorySaver : IDisposable
         finally { _checking = false; }
     }
 
-    private bool CanConsider(BrowserTab tab, TabState state)
+    public async Task<bool> SuspendNowAsync(BrowserTab tab)
     {
-        if (_disposed || _view.IsDisposed || tab.IsDisposed || !state.ObserverReady ||
+        if (_checking || !_states.TryGetValue(tab, out var state)) return false;
+        _checking = true;
+        try { await TrySuspendAsync(tab, state, true); return !tab.IsDisposed && tab.IsSuspended; }
+        finally { _checking = false; }
+    }
+
+    private bool CanConsider(BrowserTab tab, TabState state, bool ignoreIdle = false)
+    {
+        if (_disposed || _view.IsDisposed || tab.IsDisposed || tab.IsFloatingVideo || !state.ObserverReady ||
             !_view.TabPages.Contains(tab)) return false;
         var core = tab.Web.CoreWebView2;
         if (core is null || TabMemorySafety.IsSiteException(core.Source, _preferences.MemorySaverExceptions))
@@ -172,17 +180,17 @@ public sealed class TabMemorySaver : IDisposable
             return false;
         }
         SetSuspended(tab, false);
-        return TabMemorySafety.ShouldConsider(_preferences.MemorySaverEnabled,
+        return TabMemorySafety.ShouldConsider(ignoreIdle || _preferences.MemorySaverEnabled,
             _view.SelectedTab == tab, tab.Web.Visible, tab.Loading, core.IsDocumentPlayingAudio,
-            _hasActiveDownloads(), state.CapturedMedia, false, tab.LastActivatedAt,
+            _hasActiveDownloads(), state.CapturedMedia, false, ignoreIdle ? DateTimeOffset.UtcNow.AddMinutes(-_preferences.SuspendAfterMinutes - 1) : tab.LastActivatedAt,
             DateTimeOffset.UtcNow, _preferences.SuspendAfterMinutes);
     }
 
-    private async Task TrySuspendAsync(BrowserTab tab, TabState state)
+    private async Task TrySuspendAsync(BrowserTab tab, TabState state, bool ignoreIdle = false)
     {
         try
         {
-            if (!CanConsider(tab, state)) return;
+            if (!CanConsider(tab, state, ignoreIdle)) return;
             var core = tab.Web.CoreWebView2;
             var version = state.DocumentVersion;
             var lastActivated = tab.LastActivatedAt;
@@ -190,20 +198,20 @@ public sealed class TabMemorySaver : IDisposable
                 return;
             foreach (var frame in state.Frames.ToArray())
             {
-                if (!CanConsider(tab, state) || state.DocumentVersion != version) return;
+                if (!CanConsider(tab, state, ignoreIdle) || state.DocumentVersion != version) return;
                 if (frame.IsDestroyed() != 0) continue;
                 if (await frame.ExecuteScriptAsync(SafeToSuspendProbe).WaitAsync(TimeSpan.FromSeconds(3)) != "true")
                     return;
             }
             // Script execution yields to the UI: the user may have switched tabs,
             // navigated, started a download or changed a setting while it was running.
-            if (!CanConsider(tab, state) || state.DocumentVersion != version ||
+            if (!CanConsider(tab, state, ignoreIdle) || state.DocumentVersion != version ||
                 tab.LastActivatedAt != lastActivated) return;
             if (tab.Web is TabWebView tabWeb) tabWeb.SynchronizeVisibility();
             var suspended = await core.TrySuspendAsync();
             if (tab.IsDisposed) return;
-            if (_disposed || _view.IsDisposed || _view.SelectedTab == tab || tab.Web.Visible ||
-                !_preferences.MemorySaverEnabled || state.DocumentVersion != version ||
+            if (_disposed || _view.IsDisposed || _view.SelectedTab == tab || tab.Web.Visible || tab.IsFloatingVideo ||
+                (!ignoreIdle && !_preferences.MemorySaverEnabled) || state.DocumentVersion != version ||
                 state.CapturedMedia || tab.Loading || core.IsDocumentPlayingAudio ||
                 tab.LastActivatedAt != lastActivated || _hasActiveDownloads() ||
                 TabMemorySafety.IsSiteException(core.Source, _preferences.MemorySaverExceptions))

@@ -12,6 +12,8 @@ public sealed class TabWebView : WebView2
     private double _pageZoom = 1;
     private ulong? _navigationId;
     private bool _applyingZoom;
+    public Func<string, double>? SiteZoomLookup { get; set; }
+    public Action<string, double>? SiteZoomChanged { get; set; }
 
     public TabWebView()
     {
@@ -19,7 +21,11 @@ public sealed class TabWebView : WebView2
         {
             if (!args.IsSuccess) return;
             _pageZoom = ZoomFactor;
-            CoreWebView2.NavigationStarting += (_, args) => _navigationId = args.NavigationId;
+            CoreWebView2.NavigationStarting += (_, args) =>
+            {
+                _navigationId = args.NavigationId;
+                if (SiteZoomLookup is not null) _pageZoom = SiteZoomLookup(args.Uri);
+            };
             // Chromium can reset a user-applied Ctrl+wheel zoom while loading.
             // Restore before layout and again at completion, without recording
             // that automatic reset as the user's new preference.
@@ -36,7 +42,11 @@ public sealed class TabWebView : WebView2
         };
         ZoomFactorChanged += (_, _) =>
         {
-            if (!_applyingZoom && _navigationId is null) _pageZoom = ZoomFactor;
+            if (!_applyingZoom && _navigationId is null)
+            {
+                _pageZoom = ZoomFactor;
+                if (CoreWebView2 is { } core) SiteZoomChanged?.Invoke(core.Source, _pageZoom);
+            }
         };
     }
 
@@ -45,6 +55,7 @@ public sealed class TabWebView : WebView2
         if (!double.IsFinite(factor) || factor <= 0) throw new ArgumentOutOfRangeException(nameof(factor));
         _pageZoom = factor;
         ApplyPageZoom();
+        if (CoreWebView2 is { } core) SiteZoomChanged?.Invoke(core.Source, _pageZoom);
     }
 
     private void ApplyPageZoom()

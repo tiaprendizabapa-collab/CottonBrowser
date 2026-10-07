@@ -28,6 +28,7 @@ public sealed class SettingsTab : TabPage
     private readonly Label _subtitle = Caption("Tudo o que você precisa para deixar o navegador do seu jeito.", 10f, muted: true);
     private readonly Label _noResults = Caption("Nenhuma configuração encontrada. Tente outra palavra.", 10f, muted: true);
     private readonly List<SettingsCard> _cards = new();
+    private readonly Dictionary<SettingsCard, (Control View, int Height)> _featureCards = new();
     private readonly Dictionary<string, SettingsButton> _navigation = new();
     private readonly ToolTip _navigationTips = new();
     private readonly ThemeChoice _light = new(false);
@@ -235,6 +236,23 @@ public sealed class SettingsTab : TabPage
 
     public void ShowHistory() { SelectSection("Histórico"); _historyView?.FocusSearch(); }
     public void ShowNewTab() => SelectSection("Nova guia");
+    internal void ShowFeature(string section) => SelectSection(section);
+    internal void AddFeatureSection(string section, string title, string description, Control view, int height = 440)
+    {
+        if (!_navigation.ContainsKey(section))
+        {
+            AddNavigation(section, section switch
+            {
+                "Espaços de trabalho" => "\uE8FD", "Lista de leitura" => "\uE736", "Downloads" => "\uE896",
+                "Atalhos" => "\uE765", "Backup e restauração" => "\uE74E", _ => "\uE713"
+            });
+            if (_navigation.TryGetValue("Sobre e atualizações", out var about))
+                _nav.Controls.SetChildIndex(_navigation[section], _nav.Controls.GetChildIndex(about));
+        }
+        var card = AddCard(section, title, description);
+        card.Controls.Add(view); _featureCards.Add(card, (view, height));
+        UpdateVisibleCards(); ApplyTheme();
+    }
     internal void ConfigureBookmarks(BookmarkStore store, Action changed)
     {
         _bookmarkManager?.Dispose();
@@ -322,6 +340,7 @@ public sealed class SettingsTab : TabPage
         foreach (var label in new[] { _brandTitle, _sidebarHint, _footer, _title, _subtitle, _noResults }) label.ForeColor = label.Tag as string == "muted" ? Theme.InkMuted : Theme.Ink;
         _brand.BackColor = _search.BackColor = Theme.Chrome; _searchInput.BackColor = _clearSearch.BackColor = Theme.Surface; _searchInput.ForeColor = Theme.Ink;
         foreach (var card in _cards) card.ApplyTheme();
+        foreach (var feature in _featureCards.Values) FeatureUi.ApplyTheme(feature.View);
         _historyView?.ApplyTheme();
         _aboutUpdates.ApplyTheme();
         _bookmarkManager?.ApplyTheme(); _newTabCustomization.ApplyTheme();
@@ -362,6 +381,11 @@ public sealed class SettingsTab : TabPage
             "Histórico" => "Consulte e gerencie sua navegação sem sair das configurações.",
             "Sobre e atualizações" => "Confira sua versão e acompanhe as novidades do CottonBrowser.",
             "Nova guia" => "Deixe a página inicial com a sua cara.",
+            "Espaços de trabalho" => "Organize conjuntos de abas para cada atividade.",
+            "Lista de leitura" => "Guarde páginas e anotações para consultar depois.",
+            "Downloads" => "Escolha onde seus arquivos serão salvos.",
+            "Atalhos" => "Use o teclado do seu jeito.",
+            "Backup e restauração" => "Preserve suas preferências e organização.",
             "Senhas salvas" => "Cuide das credenciais armazenadas neste perfil.", "Privacidade e proteção" => "Sua navegação, com mais controle.",
             "Inicialização" => "Continue sua navegação ao abrir o CottonBrowser.", "Desempenho" => "Ajuste o uso de recursos das abas.", "Pesquisa" => "Encontre o que precisa com seu buscador preferido.",
             _ => "Tudo o que você precisa para deixar o navegador do seu jeito."
@@ -393,7 +417,7 @@ public sealed class SettingsTab : TabPage
             _brandTitle.Visible = _sidebarHint.Visible = !compact;
             _sidebarHint.SetBounds(D(24), D(93), _sidebar.Width - D(40), D(20));
             _nav.SetBounds(D(12), D(compact ? 88 : 125), _sidebar.Width - D(24), Math.Max(D(60), _sidebar.Height - D(compact ? 104 : 205)));
-            foreach (var button in _navigation.Values) button.Size = new Size(_nav.Width - D(4), D(44));
+            foreach (var button in _navigation.Values) button.Size = new Size(Math.Max(1, _nav.Width - SystemInformation.VerticalScrollBarWidth - D(8)), D(44));
             _footer.SetBounds(D(24), Math.Max(D(375), _sidebar.Height - D(55)), _sidebar.Width - D(36), D(38)); _footer.Visible = !compact && _sidebar.Height >= D(460);
             var available = Math.Max(1, _workspace.ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
             var width = Math.Min(D(840), Math.Max(1, available - D(56))); var left = Math.Max(D(20), (available - width) / 2);
@@ -414,6 +438,12 @@ public sealed class SettingsTab : TabPage
     }
     private int CardHeight(SettingsCard card, int width)
     {
+        if (_featureCards.TryGetValue(card, out var feature))
+        {
+            var height = D(feature.Height);
+            feature.View.SetBounds(D(24), D(96), Math.Max(1, width - D(48)), height);
+            return height + D(120);
+        }
         if (ReferenceEquals(card, _aboutCard))
         {
             var contentWidth = Math.Max(1, width - D(48));

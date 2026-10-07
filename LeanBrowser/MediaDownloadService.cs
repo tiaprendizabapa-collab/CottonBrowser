@@ -127,7 +127,7 @@ internal sealed class MediaDownloadService : IDisposable
         string pageUrl,
         MediaDownloadKind kind,
         IProgress<MediaDownloadProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? destinationDirectory = null)
     {
         if (!IsSupportedPageUrl(pageUrl))
             throw new ArgumentException("A página precisa ter um endereço HTTP ou HTTPS válido.", nameof(pageUrl));
@@ -137,8 +137,10 @@ internal sealed class MediaDownloadService : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         await EnsureToolsAsync(kind, progress, cancellationToken);
 
-        Directory.CreateDirectory(_downloadsDirectory);
-        var temporaryRoot = Path.Combine(_downloadsDirectory, ".cotton-media-tmp");
+        var downloadsDirectory = destinationDirectory ?? _downloadsDirectory;
+        if (!Path.IsPathFullyQualified(downloadsDirectory)) throw new ArgumentException("A pasta de downloads precisa ser absoluta.");
+        Directory.CreateDirectory(downloadsDirectory);
+        var temporaryRoot = Path.Combine(downloadsDirectory, ".cotton-media-tmp");
         var jobDirectory = Path.Combine(temporaryRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(jobDirectory);
 
@@ -154,7 +156,7 @@ internal sealed class MediaDownloadService : IDisposable
                 progress, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            var finalPath = MoveToDownloads(sourcePath);
+            var finalPath = MoveToDownloads(sourcePath, downloadsDirectory);
             var size = new FileInfo(finalPath).Length;
             progress?.Report(new MediaDownloadProgress("Download concluído.", 100, size, size));
             return new MediaDownloadResult(finalPath, size);
@@ -535,7 +537,7 @@ internal sealed class MediaDownloadService : IDisposable
         }
     }
 
-    private string MoveToDownloads(string sourcePath)
+    private string MoveToDownloads(string sourcePath, string downloadsDirectory)
     {
         var name = Path.GetFileName(sourcePath);
         if (string.IsNullOrWhiteSpace(name))
@@ -546,7 +548,7 @@ internal sealed class MediaDownloadService : IDisposable
         for (var attempt = 0; attempt < 100; attempt++)
         {
             var candidate = attempt == 0 ? name : $"{stem} ({attempt + 1}){extension}";
-            var destination = Path.Combine(_downloadsDirectory, candidate);
+            var destination = Path.Combine(downloadsDirectory, candidate);
             try
             {
                 File.Move(sourcePath, destination, overwrite: false);
@@ -558,7 +560,7 @@ internal sealed class MediaDownloadService : IDisposable
             }
         }
 
-        var unique = Path.Combine(_downloadsDirectory,
+        var unique = Path.Combine(downloadsDirectory,
             $"{stem} [{Guid.NewGuid():N}]{extension}");
         File.Move(sourcePath, unique, overwrite: false);
         return unique;
