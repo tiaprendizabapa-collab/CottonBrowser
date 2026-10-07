@@ -1,6 +1,9 @@
 ## Novidades
 
 - Zoom salvo por site, preservado inclusive após reiniciar o navegador.
+- Migração dos valores antigos de zoom para as preferências do perfil.
+- Decisões sobre câmera, microfone, localização e notificações lembradas nas abas normais; abas anônimas não persistem permissões.
+- Preferências dos sites em cookies persistentes, localStorage e IndexedDB preservadas ao reabrir o navegador.
 - Vídeo flutuante sempre visível, com a mesma reprodução da aba original.
 - Espaços de trabalho para salvar e abrir conjuntos de abas, incluindo grupos e abas fixadas.
 - Permissões e cookies do site acessíveis pelo cadeado na barra de endereço.

@@ -1,5 +1,13 @@
 namespace LeanBrowser;
 
+public sealed partial class SettingsTab
+{
+    partial void ApplyFeatureTheme()
+    {
+        foreach (var feature in _featureCards.Values) FeatureUi.ApplyTheme(feature.View);
+    }
+}
+
 internal static class FeatureUi
 {
     public static Button Button(string text, Action action)

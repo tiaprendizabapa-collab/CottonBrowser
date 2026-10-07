@@ -13,7 +13,7 @@ internal sealed class SiteControlsDialog : Form
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(16) };
         FeatureUi.WrapNotes(panel);
         panel.Controls.Add(FeatureUi.Note(origin));
-        panel.Controls.Add(FeatureUi.Note(secure ? "As permissões são pedidas a cada uso. Bloqueios abaixo valem durante esta sessão."
+        panel.Controls.Add(FeatureUi.Note(secure ? "As decisões são lembradas nas abas normais. Abas anônimas não salvam permissões. Bloqueios abaixo valem durante esta sessão."
             : "Câmera, microfone, localização e notificações são bloqueados em páginas sem HTTPS."));
         foreach (var (kind, label) in new[] { ("Camera", "Câmera"), ("Microphone", "Microfone"), ("Geolocation", "Localização"), ("Notifications", "Notificações") })
         {

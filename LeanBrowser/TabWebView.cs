@@ -39,6 +39,12 @@ public sealed class TabWebView : WebView2
                 ApplyPageZoom();
                 _navigationId = null;
             };
+            CoreWebView2.SourceChanged += (_, _) =>
+            {
+                if (SiteZoomLookup is null) return;
+                _pageZoom = SiteZoomLookup(CoreWebView2.Source);
+                ApplyPageZoom();
+            };
         };
         ZoomFactorChanged += (_, _) =>
         {

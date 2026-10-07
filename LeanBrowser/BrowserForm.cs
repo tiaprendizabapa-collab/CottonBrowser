@@ -1658,7 +1658,7 @@ public sealed partial class BrowserForm : Form
                 _siteAllowlist);
             tab.PermissionSubscription = _permissionPolicy.Attach(tab.Web);
             if (!tab.IsPrivate)
-                await _permissionPolicy.ResetPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
+                await _permissionPolicy.LoadPersistedPermissionsAsync(tab.Web.CoreWebView2.Profile);
             TrustedBrowserBridge.Attach(tab.Web, new TrustedBrowserBridgeHandlers(
                 url => OpenTabFromBridgeAsync(url, tab.IsPrivate),
                 SaveBookmarkFromBridge,

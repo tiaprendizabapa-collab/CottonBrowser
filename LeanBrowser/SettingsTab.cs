@@ -4,7 +4,7 @@ using System.Globalization;
 namespace LeanBrowser;
 
 /// <summary>Preferências com navegação por categoria, busca e controles nativos.</summary>
-public sealed class SettingsTab : TabPage
+public sealed partial class SettingsTab : TabPage
 {
     private readonly Action<bool> _setTheme;
     private readonly Action<Color> _setAccent;
@@ -227,6 +227,8 @@ public sealed class SettingsTab : TabPage
     public void ShowBookmarks() { SelectSection("Favoritos"); if (_favorites.Items.Count != 0) _favorites.Focus(); }
     public void ShowAboutUpdates() => SelectSection("Sobre e atualizações");
 
+    partial void ApplyFeatureTheme();
+
     internal void ConfigureUpdates(Version installed, UpdateCheckHistory? history, BrowserUpdate? available,
         bool busy, string? activity)
     {
@@ -340,7 +342,7 @@ public sealed class SettingsTab : TabPage
         foreach (var label in new[] { _brandTitle, _sidebarHint, _footer, _title, _subtitle, _noResults }) label.ForeColor = label.Tag as string == "muted" ? Theme.InkMuted : Theme.Ink;
         _brand.BackColor = _search.BackColor = Theme.Chrome; _searchInput.BackColor = _clearSearch.BackColor = Theme.Surface; _searchInput.ForeColor = Theme.Ink;
         foreach (var card in _cards) card.ApplyTheme();
-        foreach (var feature in _featureCards.Values) FeatureUi.ApplyTheme(feature.View);
+        ApplyFeatureTheme();
         _historyView?.ApplyTheme();
         _aboutUpdates.ApplyTheme();
         _bookmarkManager?.ApplyTheme(); _newTabCustomization.ApplyTheme();

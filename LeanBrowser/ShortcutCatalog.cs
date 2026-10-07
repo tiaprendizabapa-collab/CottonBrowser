@@ -1,5 +1,10 @@
 namespace LeanBrowser;
 
+public sealed partial class BrowserPreferences
+{
+    partial void NormalizeShortcuts() => Shortcuts = ShortcutCatalog.Normalize(Shortcuts);
+}
+
 public sealed record BrowserShortcut(string Id, string Label, Keys Default);
 public static class ShortcutCatalog
 {

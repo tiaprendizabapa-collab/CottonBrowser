@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace LeanBrowser;
 
 /// <summary>Preferências locais compartilhadas pelas janelas do navegador.</summary>
-public sealed class BrowserPreferences
+public sealed partial class BrowserPreferences
 {
     private static readonly Lazy<BrowserPreferences> Shared = new(() => Load(Path.Combine(BrowserPaths.DataDirectory, "preferences.json")));
     private readonly string _path;
@@ -43,7 +43,11 @@ public sealed class BrowserPreferences
         var preferences = new BrowserPreferences(path);
         try
         {
-            if (!File.Exists(preferences._path)) return preferences;
+            if (!File.Exists(preferences._path))
+            {
+                preferences.ImportLegacySiteZoom();
+                return preferences;
+            }
             var data = JsonSerializer.Deserialize<PreferenceData>(File.ReadAllText(preferences._path));
             if (data is null) return preferences;
             preferences.RestoreSession = data.RestoreSession;
@@ -63,6 +67,7 @@ public sealed class BrowserPreferences
             preferences.NewTabShowShortcuts = data.NewTabShowShortcuts;
             if (data.NewTabShortcuts is not null) preferences.NewTabShortcuts = data.NewTabShortcuts;
             preferences.Normalize();
+            preferences.ImportLegacySiteZoom();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
         return preferences;
@@ -104,11 +109,13 @@ public sealed class BrowserPreferences
 
     private void Normalize()
     {
-        SiteZoom = (SiteZoom ?? new()).Where(p => TryNormalizeExceptionHost(p.Key, out var host) && host == p.Key
-                && double.IsFinite(p.Value) && p.Value >= .25 && p.Value <= 5)
-            .Take(2000).ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+        var normalizedZoom = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, factor) in SiteZoom ?? new())
+            if (TryGetZoomHost("https://" + key, out var host) && IsValidZoom(factor) && normalizedZoom.Count < 2000)
+                normalizedZoom[host] = factor;
+        SiteZoom = normalizedZoom;
         if (DownloadFolder.Length > 0 && !Path.IsPathFullyQualified(DownloadFolder)) DownloadFolder = "";
-        Shortcuts = ShortcutCatalog.Normalize(Shortcuts);
+        NormalizeShortcuts();
         if (NewTabBackground is not ("Padrão" or "Azul" or "Verde" or "Pôr do sol")) NewTabBackground = "Padrão";
         NewTabShortcuts = (NewTabShortcuts ?? []).Where(b => b is not null && BookmarkStore.IsWebUrl(b.Url) && !string.IsNullOrWhiteSpace(b.Title))
             .DistinctBy(b => b.Url).Take(12).Select(b => b with { Title = b.Title[..Math.Min(80, b.Title.Length)] }).ToArray();
@@ -142,14 +149,48 @@ public sealed class BrowserPreferences
             || host.EndsWith("." + exception, StringComparison.OrdinalIgnoreCase));
     }
 
-    public double ZoomFor(string? url) => TryNormalizeExceptionHost(url, out var host)
+    partial void NormalizeShortcuts();
+
+    public double GetSiteZoom(string? url) => TryGetZoomHost(url, out var host)
         && SiteZoom.TryGetValue(host, out var zoom) ? zoom : 1;
 
-    public void RememberZoom(string? url, double zoom)
+    public double ZoomFor(string? url) => GetSiteZoom(url);
+
+    public void RememberZoom(string? url, double zoom) => SetSiteZoom(url, zoom);
+
+    public bool SetSiteZoom(string? url, double zoom)
     {
-        if (!TryNormalizeExceptionHost(url, out var host) || host == TrustedBrowserBridge.HostName) return;
-        if (Math.Abs(zoom - 1) < .001) SiteZoom.Remove(host); else SiteZoom[host] = Math.Clamp(zoom, .25, 5);
-        Save();
+        if (!TryGetZoomHost(url, out var host) || !IsValidZoom(zoom)) return false;
+        if (Math.Abs(zoom - 1) < .001) SiteZoom.Remove(host); else SiteZoom[host] = zoom;
+        return Save();
+    }
+
+    internal static bool TryGetZoomHost(string? url, out string host)
+    {
+        host = string.Empty;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")
+            || uri.Host.Length == 0 || uri.UserInfo.Length != 0) return false;
+        host = uri.IdnHost.TrimEnd('.').ToLowerInvariant();
+        return host.Length != 0 && host != "app.cottonbrowser.test";
+    }
+
+    private static bool IsValidZoom(double factor) => double.IsFinite(factor) && factor is >= .25 and <= 5;
+
+    private void ImportLegacySiteZoom()
+    {
+        var legacyPath = Path.Combine(Path.GetDirectoryName(_path)!, "site-zoom.json");
+        if (!File.Exists(legacyPath)) return;
+        try
+        {
+            var oldValues = JsonSerializer.Deserialize<Dictionary<string, double>>(File.ReadAllText(legacyPath));
+            if (oldValues is null) return;
+            foreach (var (host, factor) in oldValues)
+                if (TryGetZoomHost("https://" + host, out var normalized)
+                    && IsValidZoom(factor) && !SiteZoom.ContainsKey(normalized))
+                    SiteZoom[normalized] = factor;
+            if (Save()) File.Delete(legacyPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
     }
 
     public void Reload()

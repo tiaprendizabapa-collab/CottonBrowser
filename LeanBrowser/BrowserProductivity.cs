@@ -213,13 +213,12 @@ public sealed partial class BrowserForm
                 foreach (var window in Application.OpenForms.OfType<BrowserForm>().ToArray())
                 {
                     window._permissionPolicy.SetBlocked(origin, kind, isPrivate, blocked);
-                    if (!blocked) continue;
                     foreach (var page in window._tabView.TabPages.OfType<BrowserTab>().Where(t => t.IsPrivate == isPrivate).ToArray())
                     {
                         if (page.Web.CoreWebView2 is not { } engine || !Uri.TryCreate(engine.Source, UriKind.Absolute, out var current)
                             || current.GetLeftPart(UriPartial.Authority) != origin) continue;
                         await engine.Profile.SetPermissionStateAsync(Enum.Parse<CoreWebView2PermissionKind>(kind), origin, CoreWebView2PermissionState.Default);
-                        if (!page.IsDisposed) engine.Reload();
+                        if (blocked && !page.IsDisposed) engine.Reload();
                     }
                 }
             }, async () =>

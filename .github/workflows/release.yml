@@ -110,7 +110,7 @@ jobs:
       - name: Verificar sessão, abas, histórico, favoritos e recursos de navegação
         shell: pwsh
         run: |
-          foreach ($project in @('SessionChecks', 'TabNavigationChecks', 'UrlChecks', 'NavigationHistoryChecks', 'TabMemoryChecks', 'BookmarkChecks', 'BrowserFeatureChecks')) {
+          foreach ($project in @('SessionChecks', 'TabNavigationChecks', 'UrlChecks', 'NavigationHistoryChecks', 'TabMemoryChecks', 'BookmarkChecks', 'BrowserFeatureChecks', 'BrowserProductivityChecks')) {
             dotnet run --project $project
             if ($LASTEXITCODE -ne 0) { throw "Falha nas verificações: $project" }
           }

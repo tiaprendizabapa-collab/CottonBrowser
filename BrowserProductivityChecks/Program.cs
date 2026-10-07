@@ -39,6 +39,18 @@ internal static class Program
         prefs.RememberZoom("https://alpha.example/page", 1.25);
         Check(BrowserPreferences.Load(Path.Combine(directory, "preferences.json")).ZoomFor("https://alpha.example/other") == 1.25, "Zoom persists across restart and paths.");
         Check(prefs.ZoomFor("https://beta.example/") == 1, "Different sites keep separate zoom.");
+        Check(!prefs.SetSiteZoom("https://app.cottonbrowser.test/", 1.5) && !prefs.SetSiteZoom("https://alpha.example", double.NaN), "Internal pages and invalid zoom values are rejected.");
+        var legacyDirectory = Path.Combine(Work, "legacy"); Directory.CreateDirectory(legacyDirectory);
+        var legacyPath = Path.Combine(legacyDirectory, "site-zoom.json");
+        File.WriteAllText(legacyPath, "{\"ALPHA.EXAMPLE.\":1.75,\"beta.example\":1.25}");
+        File.WriteAllText(Path.Combine(legacyDirectory, "preferences.json"), "{\"SiteZoom\":{\"alpha.example\":1.5}}");
+        var migrated = BrowserPreferences.Load(Path.Combine(legacyDirectory, "preferences.json"));
+        Check(migrated.GetSiteZoom("https://alpha.example") == 1.5 && migrated.GetSiteZoom("https://beta.example") == 1.25
+            && !File.Exists(legacyPath), "Legacy zoom migrates without replacing current choices.");
+        var failedMigration = Path.Combine(Work, "failed-migration"); Directory.CreateDirectory(Path.Combine(failedMigration, "preferences.json"));
+        File.WriteAllText(Path.Combine(failedMigration, "site-zoom.json"), "{\"alpha.example\":1.75}");
+        BrowserPreferences.Load(Path.Combine(failedMigration, "preferences.json"));
+        Check(File.Exists(Path.Combine(failedMigration, "site-zoom.json")), "Failed migration preserves the original zoom file.");
         prefs.DownloadFolder = Path.Combine(Work, "downloads"); prefs.AskDownloadLocation = true;
         prefs.Shortcuts["history"] = (int)(Keys.Control | Keys.Alt | Keys.H); Check(prefs.Save(), "Preferences save.");
         var loaded = BrowserPreferences.Load(Path.Combine(directory, "preferences.json"));
@@ -83,6 +95,14 @@ internal static class Program
         Check(policy.IsBlocked("https://alpha.example", "Camera", false) && !policy.IsBlocked("https://alpha.example", "Camera", true), "Permission rules isolate private browsing.");
         Check(!(bool)Invoke(policy, "RecordDecision", "regular|https://alpha.example|Camera", true)!, "A pending allow cannot defeat a revocation.");
         policy.SetBlocked("https://alpha.example", "Camera", false, false); Check(!policy.IsBlocked("https://alpha.example", "Camera", false), "Permissions can return to asking.");
+        var savedPermissions = (System.Collections.Concurrent.ConcurrentDictionary<string, CoreWebView2PermissionState>)typeof(PermissionPolicy)
+            .GetField("_saved", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        savedPermissions["regular|https://alpha.example|Camera"] = CoreWebView2PermissionState.Allow;
+        using var otherWindowPolicy = new PermissionPolicy();
+        Check(otherWindowPolicy.LastDecision("https://alpha.example", "Camera", false) == true, "Regular windows share remembered decisions.");
+        policy.SetBlocked("https://alpha.example", "Camera", false, true);
+        Check(!savedPermissions.ContainsKey("regular|https://alpha.example|Camera") && otherWindowPolicy.IsBlocked("https://alpha.example", "Camera", false), "Revocation clears a remembered grant across windows.");
+        policy.SetBlocked("https://alpha.example", "Camera", false, false);
         Console.WriteLine("PASS: site zoom, downloads, shortcuts, workspaces, reading notes, validated backup/restore and permission revocation.");
     }
 
