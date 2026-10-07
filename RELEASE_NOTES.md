@@ -1,5 +1,7 @@
 ## Novidades
 
+- Download de apenas áudio convertido automaticamente para MP3, com indicação da etapa de conversão.
+
 - Zoom salvo por site, preservado inclusive após reiniciar o navegador.
 - Migração dos valores antigos de zoom para as preferências do perfil.
 - Decisões sobre câmera, microfone, localização e notificações lembradas nas abas normais; abas anônimas não persistem permissões.

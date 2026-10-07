@@ -204,6 +204,7 @@ internal sealed class MediaDownloadService : IDisposable
             "--no-cache-dir",
             "--encoding", "utf-8",
             "--no-simulate",
+            "--no-quiet",
             "--newline",
             "--color", "no_color",
             "--progress",
@@ -213,10 +214,12 @@ internal sealed class MediaDownloadService : IDisposable
             "--print", "after_move:" + FilePrefix + "%(filepath)s",
             "-P", outputDirectory,
             "-o", "%(title)s [%(id)s].%(ext)s",
-            "-f", kind == MediaDownloadKind.Audio ? "bestaudio" : "bestvideo+bestaudio/best"
+            "-f", kind == MediaDownloadKind.Audio ? "bestaudio/best" : "bestvideo+bestaudio/best"
         };
 
         args.AddRange(["--ffmpeg-location", ffmpegDirectory!]);
+        if (kind == MediaDownloadKind.Audio)
+            args.AddRange(["--extract-audio", "--audio-format", "mp3", "--audio-quality", "0"]);
 
         args.Add("--");
         args.Add(pageUrl);
@@ -497,6 +500,9 @@ internal sealed class MediaDownloadService : IDisposable
             || !File.Exists(fullPath))
             throw new InvalidDataException("A ferramenta de mídia informou um caminho de saída inválido.");
 
+        if (kind == MediaDownloadKind.Audio && !Path.GetExtension(fullPath).Equals(".mp3", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Não foi possível concluir a conversão do áudio para MP3.");
+
         return fullPath;
 
         async Task ReadOutputAsync(StreamReader reader)
@@ -521,6 +527,11 @@ internal sealed class MediaDownloadService : IDisposable
                     progress?.Report(new MediaDownloadProgress(
                         kind == MediaDownloadKind.Audio ? "Baixando áudio…" : "Baixando vídeo…",
                         percent, received, total));
+                }
+                else if (kind == MediaDownloadKind.Audio && line.StartsWith("[ExtractAudio]", StringComparison.OrdinalIgnoreCase))
+                {
+                    progress?.Report(new MediaDownloadProgress(
+                        "Convertendo áudio para MP3…", null, -1, -1));
                 }
                 else if (line.Contains("[Merger]", StringComparison.OrdinalIgnoreCase))
                 {

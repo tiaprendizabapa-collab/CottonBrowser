@@ -12,6 +12,7 @@ e proteção de anúncios por extensão, filtros de rede e scripts de página.
 - **Permissões do site:** clique no cadeado para consultar o último pedido e bloquear câmera, microfone, localização ou notificações durante a sessão. Bloquear recarrega as abas desse endereço para encerrar o uso. A mesma tela pode apagar cookies aplicáveis ao site.
 - **Limpeza de dados:** Configurações > Privacidade e proteção permite escolher histórico, cookies/dados dos sites e cache, da última hora, 24 horas, sete dias ou de todo o período. Senhas e favoritos são mantidos.
 - **Downloads:** selecione uma pasta padrão e a opção de perguntar o destino em Configurações > Downloads. Downloads de mídia também respeitam a pasta escolhida.
+- **Áudio em MP3:** em ⋮ > Baixar mídia desta página > Baixar áudio (MP3), o áudio é convertido automaticamente para MP3 antes de salvar.
 - **Backup:** exporte ou restaure favoritos, pastas, preferências, tema, atalhos, zoom, espaços e lista de leitura em Configurações > Backup e restauração. Cookies, histórico e senhas não são exportados. Antes de restaurar, uma cópia dos dados anteriores fica na pasta Backups do perfil.
 - **Atalhos:** altere dez comandos em Configurações > Atalhos. Combinações usadas para navegação, edição e outros comandos são protegidas contra conflitos.
 - **Lista de leitura:** salve a página visitada antes de abrir as configurações, marque leituras concluídas e escreva anotações. Abas anônimas não são incluídas.

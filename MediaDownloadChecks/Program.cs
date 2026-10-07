@@ -1,15 +1,21 @@
 using LeanBrowser;
 using System.Reflection;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
 
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         CheckPageUrlValidation();
         CheckArgumentIsolation();
         CheckBrowserMenu();
         CheckHistoryAcrossRestart();
+        if (args is ["--conversion-tools", var toolsRoot])
+            Task.Run(() => CheckMp3ConversionAsync(toolsRoot)).GetAwaiter().GetResult();
         Console.WriteLine("PASS: validação de URL, argumentos isolados e histórico de mídia sem acesso à rede.");
     }
 
@@ -22,7 +28,7 @@ internal static class Program
         var media = menu!.Items.OfType<BrowserMenuItem>()
             .SingleOrDefault(item => item.Text == "Baixar mídia desta página");
         Check(media is not null && media.DropDownItems.OfType<BrowserMenuItem>()
-            .Select(item => item.Text).SequenceEqual(["Baixar vídeo", "Baixar áudio (formato original)"]),
+            .Select(item => item.Text).SequenceEqual(["Baixar vídeo", "Baixar áudio (MP3)"]),
             "The three-dot menu should expose video and audio downloads.");
     }
 
@@ -65,10 +71,15 @@ internal static class Program
         Check(OptionValue(video, "-f") == "bestvideo+bestaudio/best"
               && OptionValue(video, "--ffmpeg-location") == ffmpegDirectory,
             "Video should request combined streams with the configured FFmpeg directory.");
-        Check(OptionValue(audio, "-f") == "bestaudio"
+        Check(OptionValue(audio, "-f") == "bestaudio/best"
               && OptionValue(audio, "--ffmpeg-location") == ffmpegDirectory
+              && audio.Contains("--extract-audio")
+              && OptionValue(audio, "--audio-format") == "mp3"
+              && OptionValue(audio, "--audio-quality") == "0"
               && !audio.Contains("--fixup"),
-            "Audio should select an audio-only stream and provide FFmpeg for streamed formats.");
+            "Audio should extract and convert the best available audio to MP3 using FFmpeg.");
+        Check(!video.Contains("--extract-audio") && !video.Contains("--audio-format"),
+            "Video downloads should retain their existing stream selection and output format.");
 
         ExpectArgumentException(() => MediaDownloadService.BuildDownloadArguments("file:///video.mp4",
             MediaDownloadKind.Video, outputDirectory, denoPath, ffmpegDirectory));
@@ -80,6 +91,88 @@ internal static class Program
             MediaDownloadKind.Video, outputDirectory, denoPath, null));
         ExpectArgumentException(() => MediaDownloadService.BuildDownloadArguments(pageUrl,
             MediaDownloadKind.Audio, outputDirectory, denoPath, null));
+    }
+
+    // Optional integration check using the installed tools and a synthetic local
+    // video. No public site or existing user download is accessed.
+    private static async Task CheckMp3ConversionAsync(string toolsRoot)
+    {
+        var directory = Path.GetFullPath(Path.Combine(".verification", "mp3-" + Guid.NewGuid().ToString("N")));
+        Directory.CreateDirectory(directory);
+        var ffmpegDirectory = Path.Combine(toolsRoot, "ffmpeg-2026-09-30");
+        var input = Path.Combine(directory, "fixture.webm");
+        await RunToolAsync(Path.Combine(ffmpegDirectory, "ffmpeg.exe"),
+            ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=160x90:r=10",
+             "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "2",
+             "-c:v", "libvpx", "-c:a", "libopus", input]);
+        var bytes = await File.ReadAllBytesAsync(input);
+        var portSelector = new TcpListener(IPAddress.Loopback, 0);
+        portSelector.Start();
+        var port = ((IPEndPoint)portSelector.LocalEndpoint).Port;
+        portSelector.Stop();
+        using var server = new HttpListener();
+        var baseUrl = $"http://127.0.0.1:{port}/";
+        server.Prefixes.Add(baseUrl);
+        server.Start();
+        var serving = ServeAsync();
+        try
+        {
+            using var service = new MediaDownloadService(toolsRoot: toolsRoot, downloadsDirectory: Path.Combine(directory, "downloads"));
+            Check(service.ToolsReady(MediaDownloadKind.Audio), "Installed tools must be available for the integration check.");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var messages = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            var progress = new RecordingProgress(messages);
+            var result = await service.DownloadAsync(baseUrl + "fixture.webm", MediaDownloadKind.Audio, progress, timeout.Token);
+            Check(Path.GetExtension(result.FilePath) == ".mp3" && result.FileSize > 0, "The completed download must be an MP3 file.");
+            var probe = await RunToolAsync(Path.Combine(ffmpegDirectory, "ffprobe.exe"),
+                ["-v", "error", "-show_streams", "-show_format", "-of", "json", result.FilePath]);
+            using var data = JsonDocument.Parse(probe);
+            var streams = data.RootElement.GetProperty("streams").EnumerateArray().ToArray();
+            Check(streams.Length == 1 && streams[0].GetProperty("codec_name").GetString() == "mp3"
+                && streams[0].GetProperty("codec_type").GetString() == "audio", "The output must contain real MP3 audio and no video stream.");
+            Check(!Directory.Exists(Path.Combine(directory, "downloads", ".cotton-media-tmp")), "Converted source and temporary files must be removed.");
+            Check(messages.Any(m => m.Contains("Convertendo áudio para MP3")), "The conversion phase must be reported.");
+            Console.WriteLine("PASS: download local de vídeo WebM/Opus convertido em MP3 real, sem vídeo, com progresso e limpeza dos temporários.");
+            Console.WriteLine("MP3 de teste: " + result.FilePath);
+        }
+        finally
+        {
+            server.Stop();
+            await serving;
+        }
+
+        async Task ServeAsync()
+        {
+            try
+            {
+                while (server.IsListening)
+                {
+                    var context = await server.GetContextAsync();
+                    context.Response.ContentType = "video/webm";
+                    context.Response.ContentLength64 = bytes.Length;
+                    if (context.Request.HttpMethod != "HEAD") await context.Response.OutputStream.WriteAsync(bytes);
+                    context.Response.Close();
+                }
+            }
+            catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException && !server.IsListening) { }
+        }
+    }
+
+    private sealed class RecordingProgress(System.Collections.Concurrent.ConcurrentQueue<string> messages) : IProgress<MediaDownloadProgress>
+    {
+        public void Report(MediaDownloadProgress progress) => messages.Enqueue(progress.Message);
+    }
+
+    private static async Task<string> RunToolAsync(string executable, string[] arguments)
+    {
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Media tool did not start.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Check(process.ExitCode == 0, "Media tool failed: " + await error);
+        return await output;
     }
 
     private static string OptionValue(IReadOnlyList<string> args, string option)

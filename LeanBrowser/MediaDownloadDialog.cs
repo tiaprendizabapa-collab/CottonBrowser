@@ -57,8 +57,8 @@ internal sealed class MediaDownloadDialog : Form
         _uiThreadId = Environment.CurrentManagedThreadId;
         _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
 
-        Text = kind == MediaDownloadKind.Audio ? "Download de áudio" : "Download de vídeo";
-        _title.Text = kind == MediaDownloadKind.Audio ? "Baixando áudio" : "Baixando vídeo";
+        Text = kind == MediaDownloadKind.Audio ? "Download de áudio MP3" : "Download de vídeo";
+        _title.Text = kind == MediaDownloadKind.Audio ? "Baixando áudio em MP3" : "Baixando vídeo";
         _source.Text = sourceUrl;
         _status.Text = "Preparando download...";
         _detail.Text = "Aguardando informações de progresso.";

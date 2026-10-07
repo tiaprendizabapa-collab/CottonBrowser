@@ -594,7 +594,7 @@ public sealed partial class BrowserForm : Form
         var media = new BrowserMenuItem("Baixar mídia desta página", "\uE896");
         var downloadVideo = new BrowserMenuItem("Baixar vídeo", "\uE714");
         downloadVideo.Click += async (_, _) => await DownloadPageMediaAsync(MediaDownloadKind.Video);
-        var downloadAudio = new BrowserMenuItem("Baixar áudio (formato original)", "\uE189");
+        var downloadAudio = new BrowserMenuItem("Baixar áudio (MP3)", "\uE189");
         downloadAudio.Click += async (_, _) => await DownloadPageMediaAsync(MediaDownloadKind.Audio);
         media.DropDownItems.AddRange(new ToolStripItem[] { downloadVideo, downloadAudio });
         media.DropDownOpening += (_, _) => PrepareSubmenu(media);
