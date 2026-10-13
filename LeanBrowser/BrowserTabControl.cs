@@ -211,8 +211,14 @@ public sealed class BrowserTabControl : TabControl
         HeaderStrip.DragEnter += AcceptTabDrag;
         HeaderStrip.DragOver += AcceptTabDrag;
         _brandLabel.Cursor = Cursors.Hand;
-        _brandLabel.Click += (_, _) => BrandClicked?.Invoke();
-        _toolTip.SetToolTip(_brandLabel, "CottonBrowser — clique 5 vezes rapidamente");
+        // MouseUp counts every release, including the second click of a double-click.
+        _brandLabel.MouseUp += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left && _brandLabel.ClientRectangle.Contains(e.Location))
+                BrandClicked?.Invoke();
+        };
+        _brandLabel.AccessibleName = "CottonBrowser — três cliques rápidos para jogar Cotton Galaxy";
+        _toolTip.SetToolTip(_brandLabel, "Cotton Galaxy — clique 3 vezes rapidamente para jogar");
         try
         {
             using var logo = Draw.LoadCottonIcon();

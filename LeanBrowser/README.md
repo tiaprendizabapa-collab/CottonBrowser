@@ -8,6 +8,7 @@ No YouTube, o bloqueio é feito pelo uBlock Origin Lite com filtros atualizados.
 
 ## Organização e controles
 
+- **Cotton Galaxy:** clique três vezes rapidamente no ícone do CottonBrowser, no canto superior esquerdo, para abrir um jogo de nave offline em uma nova aba. Use as setas ou A/D para mover, Espaço para atirar e P para pausar.
 - **Zoom por site:** o tamanho escolhido com o menu ou Ctrl+/Ctrl− é salvo neste perfil e recuperado após reiniciar. Em abas anônimas, o ajuste é temporário. Redefina os sites em Configurações > Aparência.
 - **Vídeo flutuante:** use o menu de três pontos ou Ctrl+Shift+Y com um vídeo carregado na página. A janela fica sobre os outros programas e usa a mesma reprodução. Ao fechá-la, a página retorna à aba; navegar também encerra a janela.
 - **Espaços de trabalho:** salve e nomeie conjuntos de até 200 abas normais em Configurações > Espaços de trabalho. Abrir um espaço acrescenta suas abas, preservando as atuais, os grupos, as abas fixadas e o estado de áudio.

@@ -25,6 +25,11 @@ internal static class Program
     }
     private static void DataChecks()
     {
+        var trustedUi = typeof(TrustedBrowserBridge).GetMethod("IsTrustedUiUri", BindingFlags.Static | BindingFlags.NonPublic)!;
+        foreach (var url in new[] { TrustedBrowserBridge.UiUrl, TrustedBrowserBridge.NewTabUrl, TrustedBrowserBridge.PrivateTabUrl, "https://app.cottonbrowser.test/" })
+            Check((bool)trustedUi.Invoke(null, [url])!, "As páginas da Central devem preservar acesso à ponte do navegador.");
+        foreach (var url in new[] { TrustedBrowserBridge.GalaxyUrl, "https://app.cottonbrowser.test/galaxy.html?play=1", "https://app.cottonbrowser.test/other.html", "https://example.com/index.html" })
+            Check(!(bool)trustedUi.Invoke(null, [url])!, "O jogo e páginas externas não devem receber comandos privilegiados da Central.");
         var parseSuggestions = Browser.GetType("LeanBrowser.SearchSuggestionClient")!
             .GetMethod("ParseSuggestions", BindingFlags.Static | BindingFlags.NonPublic)!;
         using (var response = JsonDocument.Parse("[null,42,\"invalid\",[],{}, {\"phrase\":null}, {\"phrase\":true}, {\"phrase\":\"\"}, {\"phrase\":\"algodão\"}]"))

@@ -107,7 +107,7 @@ public sealed partial class BrowserForm : Form
     private readonly BrowserWindowSession? _restoredSession;
     private bool _sessionInitialized;
     private CoreWebView2Environment? _browserEnvironment;
-    private FoxyJumpscareForm? _foxyJumpscare;
+    private bool _openingGalaxy;
     private int _brandClickCount;
     private long _lastBrandClick;
     private readonly Dictionary<CoreWebView2, CoreWebView2ContextMenuItem> _newTabContextItems = new();
@@ -1318,22 +1318,23 @@ public sealed partial class BrowserForm : Form
         }
     }
 
-    private void OnBrandClicked()
+    private async void OnBrandClicked()
     {
         var now = Environment.TickCount64;
         if (now - _lastBrandClick > 1200) _brandClickCount = 0;
         _lastBrandClick = now;
-        if (++_brandClickCount < 5) return;
+        if (++_brandClickCount < 3) return;
         _brandClickCount = 0;
 
-        if (_browserEnvironment is null || IsDisposed) return;
-        _foxyJumpscare?.Close();
-        _foxyJumpscare = new FoxyJumpscareForm(_browserEnvironment);
-        _foxyJumpscare.FormClosed += (_, _) =>
+        if (_tabs is null || IsDisposed || _openingGalaxy) return;
+        _openingGalaxy = true;
+        try
         {
-            if (_foxyJumpscare is { IsDisposed: true }) _foxyJumpscare = null;
-        };
-        _foxyJumpscare.Show(this);
+            await OpenTabAsync(TrustedBrowserBridge.GalaxyUrl, ActiveBrowserTab?.IsPrivate == true);
+            if (!IsDisposed && ActiveBrowserTab is { } tab && tab.LastKnownUrl == TrustedBrowserBridge.GalaxyUrl)
+                tab.Web.Focus();
+        }
+        finally { _openingGalaxy = false; }
     }
 
     private void CloseTab()
@@ -1611,7 +1612,6 @@ public sealed partial class BrowserForm : Form
         _suggestionDebounce.Dispose();
         _zoomFade.Dispose();
         _searchSuggestions.Dispose();
-        _foxyJumpscare?.Close();
         _telemetry.Dispose();
         _urlReputation.Dispose();
         _permissionPolicy.Dispose();

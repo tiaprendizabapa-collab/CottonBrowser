@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#08101f">
+  <title>Cotton Galaxy — CottonBrowser</title>
+  <link rel="stylesheet" href="galaxy.css">
+  <script src="galaxy.js" defer></script>
+</head>
+<body>
+  <div class="arcade-shell">
+    <header class="arcade-header">
+      <a class="brand" href="newtab.html" aria-label="Voltar para a nova aba">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span>Cotton<span class="brand-light">Browser</span></span>
+      </a>
+      <span class="secret-tag"><span aria-hidden="true">✧</span> Você encontrou uma galáxia</span>
+    </header>
+
+    <main class="main-layout">
+      <section class="game-panel" aria-label="Jogo Cotton Galaxy">
+        <div class="hud" aria-label="Placar">
+          <div><span>Pontos</span><strong id="score">000000</strong></div>
+          <div><span>Onda</span><strong id="wave">01</strong></div>
+          <div class="life-stat"><span>Vidas</span><strong id="lives" aria-label="3 vidas">♥ ♥ ♥</strong></div>
+        </div>
+
+        <div class="battlefield">
+          <canvas id="game" width="480" height="640" tabindex="0" aria-label="Campo de jogo. Use as setas ou A e D para mover, Espaço para atirar e P para pausar.">Seu navegador precisa oferecer suporte a canvas para jogar.</canvas>
+          <div class="game-overlay" id="overlay">
+            <span class="overlay-eyebrow" id="overlay-eyebrow">UMA PAUSA NA ÓRBITA</span>
+            <div class="pixel-ship" aria-hidden="true">✦</div>
+            <h1 id="overlay-title">Cotton<br><span>Galaxy</span></h1>
+            <p id="overlay-copy">Pilote sua nave. Enfrente as formações.<br>Proteja seu cantinho do universo.</p>
+            <button id="start-button" class="primary-button" type="button">Começar missão <span aria-hidden="true">→</span></button>
+            <span class="overlay-hint" id="overlay-hint">Segure Espaço para disparar</span>
+          </div>
+          <span id="announcement" class="announcement" aria-live="polite"></span>
+        </div>
+
+        <div class="touch-controls" aria-label="Controles de jogo">
+          <button id="move-left" class="control-button direction-button" type="button" aria-label="Mover para a esquerda">←</button>
+          <button id="move-right" class="control-button direction-button" type="button" aria-label="Mover para a direita">→</button>
+          <button id="fire-button" class="control-button fire-button" type="button"><span aria-hidden="true">⌖</span> ATIRAR</button>
+        </div>
+      </section>
+
+      <aside class="mission-panel">
+        <div class="mission-intro">
+          <span class="section-eyebrow">ARCADE DO COTTON</span>
+          <h2>Um pequeno<br>universo de volta.</h2>
+          <p>Uma aventura espacial inspirada nos clássicos. Só você, sua nave e mais uma onda.</p>
+        </div>
+
+        <div class="record-card">
+          <span class="record-label"><span aria-hidden="true">✧</span> SEU RECORDE</span>
+          <strong id="best-score">000000</strong>
+          <span id="record-note">Guardado neste navegador</span>
+        </div>
+
+        <section class="how-to" aria-labelledby="how-to-title">
+          <h3 id="how-to-title">Comandos da missão</h3>
+          <div class="key-row"><span><kbd>←</kbd><kbd>→</kbd> <i>ou</i> <kbd>A</kbd><kbd>D</kbd></span><span>Mover</span></div>
+          <div class="key-row"><kbd class="wide-key">Espaço</kbd><span>Atirar</span></div>
+          <div class="key-row"><kbd>P</kbd><span>Pausar</span></div>
+          <p>Você também pode usar os botões abaixo da nave.</p>
+        </section>
+
+        <div class="utility-controls">
+          <button id="pause-button" class="utility-button" type="button" disabled>Pausar</button>
+          <button id="restart-button" class="utility-button" type="button" disabled>Reiniciar</button>
+          <button id="mute-button" class="utility-button sound-button" type="button" aria-pressed="false">Som ligado</button>
+        </div>
+
+        <p class="mission-note"><span aria-hidden="true">●</span> Pronto para jogar sem internet</p>
+      </aside>
+    </main>
+    <footer class="arcade-footer">Um segredo do CottonBrowser <span aria-hidden="true">·</span> Feito para uma boa pausa</footer>
+  </div>
+</body>
+</html>

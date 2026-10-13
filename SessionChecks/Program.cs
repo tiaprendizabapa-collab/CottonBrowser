@@ -39,9 +39,31 @@ internal static class Program
             manager.Close(normal);
             Check(closed.Count == 1 && closed[0].IsPinned && closed[0].GroupName == "Trabalho", "Fechamento só deve lembrar a aba normal e seus metadados.");
 
+            using var galaxy = new BrowserTab(allowlist) { Text = "Cotton Galaxy" };
+            using var privateGalaxy = new BrowserTab(allowlist, true);
+            galaxy.NavigateOrQueue(TrustedBrowserBridge.GalaxyUrl);
+            privateGalaxy.NavigateOrQueue(TrustedBrowserBridge.GalaxyUrl);
+            var galaxyState = SessionTabState.Capture(galaxy);
+            Check(galaxyState?.Url == TrustedBrowserBridge.GalaxyUrl,
+                "O jogo em uma aba normal deve ser recuperável antes de inicializar o motor.");
+            Check(SessionTabState.Capture(privateGalaxy) is null,
+                "O jogo em uma aba anônima não pode ser salvo nem reaberto.");
+            view.TabPages.AddRange([galaxy, privateGalaxy]);
+            manager.Close(privateGalaxy);
+            manager.Close(galaxy);
+            Check(closed.Count == 2 && closed[1] == galaxyState,
+                "Fechar o jogo deve lembrar somente a aba normal para reabertura.");
+            Check(store.Save(new([new([galaxyState!], 0)], true)), "Salvar a aba normal do jogo.");
+            loaded = new BrowserSessionStore(path).Load();
+            Check(loaded.Windows.Length == 1 && loaded.Windows[0].Tabs.Length == 1
+                && loaded.Windows[0].Tabs[0] == galaxyState,
+                "A aba normal do jogo deve sobreviver à gravação e restauração da sessão.");
+
             File.WriteAllText(path, JsonSerializer.Serialize(new BrowserSessionDocument([
                 new([new("javascript:alert(1)", "Inválida"), new("https://user:password@example.com", "Credenciais"),
-                     new(TrustedBrowserBridge.PrivateTabUrl, "Anônima interna"), state], 99)], false)));
+                     new(TrustedBrowserBridge.PrivateTabUrl, "Anônima interna"),
+                     new(TrustedBrowserBridge.UiUrl, "Central interna"),
+                     new("https://app.cottonbrowser.test/other.html", "Página interna desconhecida"), state], 99)], false)));
             loaded = new BrowserSessionStore(path).Load();
             Check(loaded.Windows[0].Tabs.Length == 1 && loaded.Windows[0].SelectedIndex == 0,
                 "Restaurar deve filtrar URLs inseguras e limitar a seleção.");

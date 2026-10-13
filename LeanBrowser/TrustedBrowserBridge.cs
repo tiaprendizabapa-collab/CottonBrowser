@@ -15,6 +15,7 @@ public static class TrustedBrowserBridge
     public const string UiUrl = "https://app.cottonbrowser.test/index.html";
     public const string NewTabUrl = "https://app.cottonbrowser.test/newtab.html";
     public const string PrivateTabUrl = "https://app.cottonbrowser.test/private.html";
+    public const string GalaxyUrl = "https://app.cottonbrowser.test/galaxy.html";
     private const int ProtocolVersion = 1;
     private const int MaxMessageLength = 4 * 1024;
     private const int MaxUrlLength = 2 * 1024;
@@ -236,7 +237,11 @@ public static class TrustedBrowserBridge
         Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
         && string.Equals(uri.Host, HostName, StringComparison.OrdinalIgnoreCase)
-        && uri.IsDefaultPort;
+        && uri.IsDefaultPort
+        && (uri.AbsolutePath == "/"
+            || uri.AbsolutePath.Equals("/index.html", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.Equals("/newtab.html", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.Equals("/private.html", StringComparison.OrdinalIgnoreCase));
 
     private static bool HasOnlyProperties(JsonElement element, params string[] allowedNames)
     {

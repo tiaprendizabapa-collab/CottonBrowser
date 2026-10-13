@@ -1,5 +1,6 @@
 ## Novidades
 
+- Jogo de nave Cotton Galaxy disponível offline em uma nova aba ao clicar três vezes rapidamente no ícone do navegador.
 - uBlock Origin Lite atualizado com os filtros de 6 de outubro de 2026.
 - Compatibilidade do YouTube: filtros mantidos pelo uBlock substituem o bloqueio adicional do navegador; versões antigas da extensão são desativadas na atualização.
 

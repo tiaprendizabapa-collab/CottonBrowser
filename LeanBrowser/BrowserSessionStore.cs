@@ -8,7 +8,8 @@ public sealed record SessionTabState(string Url, string Title, bool IsPinned = f
     public static bool IsRestorableUrl(string? url) => BookmarkStore.IsWebUrl(url)
         && (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
             || !string.Equals(uri.Host, TrustedBrowserBridge.HostName, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url, TrustedBrowserBridge.NewTabUrl, StringComparison.OrdinalIgnoreCase));
+            || string.Equals(url, TrustedBrowserBridge.NewTabUrl, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url, TrustedBrowserBridge.GalaxyUrl, StringComparison.OrdinalIgnoreCase));
 
     public static SessionTabState? Capture(BrowserTab tab)
     {
