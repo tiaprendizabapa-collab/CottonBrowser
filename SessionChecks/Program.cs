@@ -45,6 +45,16 @@ internal static class Program
             loaded = new BrowserSessionStore(path).Load();
             Check(loaded.Windows[0].Tabs.Length == 1 && loaded.Windows[0].SelectedIndex == 0,
                 "Restaurar deve filtrar URLs inseguras e limitar a seleção.");
+            File.WriteAllText(path, JsonSerializer.Serialize(new BrowserSessionDocument([
+                new([new("javascript:alert(1)", "Inválida"), state, new("https://example.org", "Vizinha")], 1)], true)));
+            loaded = new BrowserSessionStore(path).Load();
+            Check(loaded.Windows[0].Tabs[loaded.Windows[0].SelectedIndex] == state,
+                "Filtrar uma aba anterior deve preservar a seleção da aba válida.");
+            File.WriteAllText(path, JsonSerializer.Serialize(new BrowserSessionDocument([
+                new([state, new("javascript:alert(1)", "Inválida"), new("https://example.org", "Vizinha")], 1)], true)));
+            loaded = new BrowserSessionStore(path).Load();
+            Check(loaded.Windows[0].SelectedIndex == 1,
+                "Uma seleção inválida deve escolher a próxima aba válida quando disponível.");
             File.WriteAllText(path, "{ arquivo incompleto");
             var damaged = new BrowserSessionStore(path);
             damaged.Load();

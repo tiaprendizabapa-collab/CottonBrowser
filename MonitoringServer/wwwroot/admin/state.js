@@ -10,3 +10,15 @@ export function createStore(initial) {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }
   };
 }
+
+// A response from an older request must never restore a previous scope or login.
+export function createRequestGate() {
+  let revision = 0;
+  return {
+    begin() {
+      const current = ++revision;
+      return () => current === revision;
+    },
+    invalidate() { revision++; }
+  };
+}

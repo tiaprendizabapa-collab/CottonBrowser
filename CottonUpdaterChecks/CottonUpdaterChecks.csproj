@@ -7,5 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\CottonUpdater\UpdateInstallGate.cs" Link="UpdateInstallGate.cs" />
+    <Compile Include="..\CottonUpdater\UpdateFileTransaction.cs" Link="UpdateFileTransaction.cs" />
+    <Compile Include="..\Shared\InstallationLock.cs" Link="InstallationLock.cs" />
   </ItemGroup>
 </Project>

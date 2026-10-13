@@ -132,12 +132,17 @@ public sealed record NavigationTelemetryEvent(
     bool IsActive,
     DateTimeOffset OccurredAt)
 {
-    public static bool IsValid(NavigationTelemetryEvent item) =>
-        item is not null && item.UserId.Length is > 0 and <= 256 &&
-        item.SessionId.Length is > 0 and <= 80 && item.Url.Length is > 0 and <= 4096 &&
+    public static bool IsValid(NavigationTelemetryEvent? item) =>
+        item is not null && item.EventType is "navigation" or "active_tab" &&
+        item.UserId is { Length: > 0 and <= 256 } && !string.IsNullOrWhiteSpace(item.UserId) &&
+        item.SessionId is { Length: > 0 and <= 80 } && !string.IsNullOrWhiteSpace(item.SessionId) &&
+        item.Url is { Length: > 0 and <= 4096 } &&
         Uri.TryCreate(item.Url, UriKind.Absolute, out var uri) &&
         uri.Scheme is "http" or "https" && string.IsNullOrEmpty(uri.UserInfo) &&
-        item.Domain.Length is > 0 and <= 255;
+        item.Domain is { Length: > 0 and <= 255 } &&
+        string.Equals(item.Domain, uri.Host, StringComparison.OrdinalIgnoreCase) &&
+        item.SearchTerm is null or { Length: <= 500 } &&
+        item.Title is null or { Length: <= 300 };
 }
 
 public sealed class NavigationLogStore

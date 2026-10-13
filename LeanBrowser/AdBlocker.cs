@@ -38,6 +38,7 @@ public sealed class AdBlocker
     private readonly SiteAllowlist _siteAllowlist;
     private CoreWebView2? _core;
     private bool _allowedPage;
+    private bool _useMaintainedYouTubeFilters;
 
     /// <summary>Total de requisicoes barradas desde o inicio do processo.</summary>
     public int TotalBlocked { get; private set; }
@@ -138,7 +139,14 @@ public sealed class AdBlocker
     {
         _siteAllowlist.Refresh();
         _allowedPage = _siteAllowlist.IsAllowed(args.Uri);
+        // Let uBOL handle YouTube's changing player/advertising protocol. A
+        // blanket domain response would override its precise allow exceptions.
+        _useMaintainedYouTubeFilters = IsYouTubePage(args.Uri);
     }
+
+    internal static bool IsYouTubePage(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && uri.Scheme is "http" or "https" && (uri.Host.Equals("youtube.com", StringComparison.OrdinalIgnoreCase)
+            || uri.Host.EndsWith(".youtube.com", StringComparison.OrdinalIgnoreCase));
 
     private void TryAddFilter(string pattern)
     {
@@ -163,7 +171,7 @@ public sealed class AdBlocker
     /// </summary>
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
-        if (!Enabled || _core is null || _allowedPage ||
+        if (!Enabled || _core is null || _allowedPage || _useMaintainedYouTubeFilters ||
             _siteAllowlist.IsAllowed(e.Request.Uri) || !MatchesBlockedDomain(e.Request.Uri))
             return; // Deixa seguir para a rede.
 

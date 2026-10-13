@@ -2,13 +2,12 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using Microsoft.Win32;
+using CottonBrowser.Shared;
 
 namespace CottonUpdater;
 
 internal static class Program
 {
-    private const long MaximumExpandedBytes = 250L * 1024 * 1024;
-
     [STAThread]
     private static void Main(string[] args)
     {
@@ -59,43 +58,9 @@ internal static class Program
                 throw new InvalidDataException("O pacote não contém todos os executáveis necessários.");
 
             using (UpdateInstallGate.Acquire(Path.Combine(target, "CottonBrowser.exe"),
-                @"Local\CottonBrowser.SingleInstance.v1", TimeSpan.FromSeconds(45)))
+                TimeSpan.FromSeconds(45)))
             {
-                var existing = new List<string>();
-                var created = new List<string>();
-                try
-                {
-                    // Salva todos os arquivos antes de substituir o primeiro.
-                    foreach (var relative in files)
-                    {
-                        var destination = Path.Combine(target, relative);
-                        if (!File.Exists(destination)) { created.Add(destination); continue; }
-                        var saved = Path.Combine(backup, relative);
-                        Directory.CreateDirectory(Path.GetDirectoryName(saved)!);
-                        File.Copy(destination, saved);
-                        existing.Add(relative);
-                    }
-
-                    foreach (var relative in files)
-                    {
-                        var destination = Path.Combine(target, relative);
-                        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                        File.Copy(Path.Combine(extracted, relative), destination, overwrite: true);
-                    }
-                }
-                catch
-                {
-                    foreach (var relative in existing)
-                    {
-                        try { File.Copy(Path.Combine(backup, relative), Path.Combine(target, relative), true); }
-                        catch { /* preserva o backup no staging para recuperação */ }
-                    }
-                    foreach (var path in created)
-                    {
-                        try { if (File.Exists(path)) File.Delete(path); } catch { }
-                    }
-                    throw;
-                }
+                UpdateFileTransaction.Apply(target, extracted, backup, files);
                 RefreshInstalledVersion(target);
             }
 
@@ -152,55 +117,9 @@ internal static class Program
     private static List<string> ExtractPackage(string archivePath, string destination)
     {
         using var archive = ZipFile.OpenRead(archivePath);
-        if (archive.Entries.Count > 256)
-            throw new InvalidDataException("O pacote contém arquivos demais.");
-
-        var files = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        long declared = 0;
-        long expanded = 0;
-        foreach (var entry in archive.Entries)
-        {
-            if (entry.FullName.EndsWith('/')) continue;
-            var relative = ValidateEntryName(entry.FullName);
-            if (!seen.Add(relative))
-                throw new InvalidDataException("O pacote contém arquivos duplicados.");
-            declared += entry.Length;
-            if (declared > MaximumExpandedBytes)
-                throw new InvalidDataException("O pacote excede o tamanho permitido.");
-
-            var output = Path.Combine(destination, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-            using var input = entry.Open();
-            using var file = new FileStream(output, FileMode.CreateNew);
-            var buffer = new byte[65536];
-            int count;
-            while ((count = input.Read(buffer)) != 0)
-            {
-                expanded += count;
-                if (expanded > MaximumExpandedBytes)
-                    throw new InvalidDataException("O pacote excede o tamanho permitido.");
-                file.Write(buffer, 0, count);
-            }
-            files.Add(relative);
-        }
-        return files;
-    }
-
-    private static string ValidateEntryName(string raw)
-    {
-        var name = raw.Replace('\\', '/');
-        var parts = name.Split('/');
-        if (parts.Any(part => string.IsNullOrWhiteSpace(part) || part is "." or ".." ||
-            part.TrimEnd(' ', '.') != part || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
-            throw new InvalidDataException("O pacote contém um caminho inválido.");
-
-        var allowed = name.Equals("CottonBrowser.exe", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("CottonUpdater.exe", StringComparison.OrdinalIgnoreCase) ||
-            name.StartsWith("Assets/Bridge/", StringComparison.OrdinalIgnoreCase);
-        if (!allowed)
-            throw new InvalidDataException("O pacote contém um arquivo inesperado.");
-
-        return Path.Combine(parts);
+        var files = BrowserPackage.Validate(archive);
+        foreach (var file in files)
+            BrowserPackage.Extract(file, Path.Combine(destination, file.RelativePath));
+        return files.Select(file => file.RelativePath).ToList();
     }
 }

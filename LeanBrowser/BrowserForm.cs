@@ -2157,6 +2157,7 @@ public sealed partial class BrowserForm : Form
         foreach (var item in items)
         {
             if (item.Name.StartsWith("inspect", StringComparison.OrdinalIgnoreCase) ||
+                item.Kind == CoreWebView2ContextMenuItemKind.Submenu &&
                 item.Children is { Count: > 0 } children && ContainsInspectContextMenuItem(children))
                 return true;
         }
@@ -2177,7 +2178,10 @@ public sealed partial class BrowserForm : Form
                 return true;
             }
 
-            if (item.Children is { Count: > 0 } children && ReplaceContextMenuItem(children, replacement))
+            // Children is only valid for a submenu. Querying it on a native or
+            // custom command can terminate the process inside the COM runtime.
+            if (item.Kind == CoreWebView2ContextMenuItemKind.Submenu &&
+                item.Children is { Count: > 0 } children && ReplaceContextMenuItem(children, replacement))
                 return true;
         }
 

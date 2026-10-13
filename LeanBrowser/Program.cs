@@ -2,6 +2,7 @@ using Microsoft.Web.WebView2.Core;
 using System.Drawing;
 using System.Linq;
 using System.Threading;
+using CottonBrowser.Shared;
 
 namespace LeanBrowser;
 
@@ -12,6 +13,8 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        using var installation = TryAcquireInstallation();
+        if (installation is null) return;
         try { BrowserPaths.Initialize(args); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Perfis"); return; }
         // The WebView2 profile is intentionally exclusive. Detect a second
@@ -59,6 +62,16 @@ internal static class Program
         finally
         {
             instanceMutex.ReleaseMutex();
+        }
+    }
+
+    private static InstallationLock? TryAcquireInstallation()
+    {
+        try { return InstallationLock.AcquireBrowser(AppContext.BaseDirectory); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(ex.Message, "CottonBrowser", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
         }
     }
 

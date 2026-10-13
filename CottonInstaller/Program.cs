@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
 using Microsoft.Win32;
+using CottonBrowser.Shared;
 
 namespace CottonInstaller;
 
@@ -75,6 +76,7 @@ internal static class Program
     internal static void Install(Action<string>? report = null)
     {
         report ??= _ => { };
+        using var installation = InstallationLock.AcquireUpdate(InstallDirectory, TimeSpan.Zero);
         if (Directory.Exists(InstallDirectory) &&
             !File.Exists(Path.Combine(InstallDirectory, "CottonBrowserUninstall.exe")) &&
             Directory.EnumerateFileSystemEntries(InstallDirectory).Any())
@@ -240,33 +242,10 @@ internal static class Program
         using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream(PayloadName)
             ?? throw new InvalidDataException("O instalador não contém o pacote do navegador.");
         using var archive = new ZipArchive(resource, ZipArchiveMode.Read);
-        if (archive.Entries.Count > 256) throw new InvalidDataException("Pacote com arquivos demais.");
-        var files = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        long total = 0;
-        foreach (var entry in archive.Entries)
-        {
-            if (entry.FullName.EndsWith('/')) continue;
-            var name = entry.FullName.Replace('\\', '/');
-            var parts = name.Split('/');
-            if (parts.Any(part => string.IsNullOrWhiteSpace(part) || part is "." or ".." ||
-                part.TrimEnd(' ', '.') != part || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) ||
-                !(name.Equals("CottonBrowser.exe", StringComparison.OrdinalIgnoreCase) ||
-                  name.Equals("CottonUpdater.exe", StringComparison.OrdinalIgnoreCase) ||
-                  name.StartsWith("Assets/Bridge/", StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidDataException("Arquivo inválido no pacote: " + name);
-            var relative = Path.Combine(parts);
-            if (!seen.Add(relative)) throw new InvalidDataException("Arquivo duplicado no pacote: " + name);
-            total += entry.Length;
-            if (total > 250L * 1024 * 1024) throw new InvalidDataException("Pacote grande demais.");
-            var output = Path.Combine(destination, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-            entry.ExtractToFile(output);
-            files.Add(relative);
-        }
-        if (!seen.Contains("CottonBrowser.exe") || !seen.Contains("CottonUpdater.exe"))
-            throw new InvalidDataException("O pacote não contém os executáveis necessários.");
-        return files;
+        var files = BrowserPackage.Validate(archive);
+        foreach (var file in files)
+            BrowserPackage.Extract(file, Path.Combine(destination, file.RelativePath));
+        return files.Select(file => file.RelativePath).ToList();
     }
 
     private static void CreateShortcut(string executable)
@@ -284,6 +263,7 @@ internal static class Program
 
     private static void Uninstall()
     {
+        using var installation = InstallationLock.AcquireUpdate(InstallDirectory, TimeSpan.Zero);
         EnsureBrowserClosed();
         if (!File.Exists(Path.Combine(InstallDirectory, "CottonBrowserUninstall.exe")))
             throw new IOException("A instalação do CottonBrowser não foi encontrada.");

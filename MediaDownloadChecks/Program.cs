@@ -10,6 +10,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        BrowserPaths.Initialize([], Path.GetFullPath(Path.Combine(".verification", "media-profile-" + Guid.NewGuid().ToString("N"))));
         CheckPageUrlValidation();
         CheckArgumentIsolation();
         CheckBrowserMenu();

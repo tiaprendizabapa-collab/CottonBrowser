@@ -64,9 +64,7 @@ public sealed class AccessControl
     private static readonly byte[] PurposeEntropy =
         SHA256.HashData(Encoding.UTF8.GetBytes(Purpose));
 
-    private static readonly string ProfileDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "LeanBrowser");
+    private static readonly string ProfileDirectory = BrowserPaths.Root;
 
     private static readonly string RegistryPath = Path.Combine(
         ProfileDirectory, "profiles.dpapi");

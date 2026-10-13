@@ -10,18 +10,25 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        BrowserPaths.Initialize([], Path.Combine(Work, "browser-data"));
         ApplicationConfiguration.Initialize(); Directory.CreateDirectory(Work);
         using var form = new Form { Width = 1024, Height = 760, Opacity = 0, ShowInTaskbar = false };
         form.Shown += async (_, _) =>
         {
-            try { if (args.Contains("--probe")) await ProbeAsync(form, args.Contains("--fault")); else await RegressionAsync(form); }
+            try
+            {
+                var urlIndex = Array.IndexOf(args, "--url");
+                var probeUrl = urlIndex >= 0 && urlIndex + 1 < args.Length ? args[urlIndex + 1] : "https://www.youtube.com/watch?v=ZvXjl20nB6Q";
+                if (args.Contains("--probe")) await ProbeAsync(form, args.Contains("--fault"), probeUrl);
+                else { await YouTubeProtectionChecks.RunAsync(form, Work); await RegressionAsync(form); }
+            }
             catch (Exception ex) { Console.Error.WriteLine(ex); Environment.ExitCode = 1; }
             finally { form.Close(); }
         };
         Application.Run(form);
     }
 
-    private static async Task ProbeAsync(Form form, bool injectFault)
+    private static async Task ProbeAsync(Form form, bool injectFault, string probeUrl)
     {
         var arguments = (string)typeof(BrowserForm).GetMethod("BrowserArguments", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null)!;
         var options = WebContentIsolation.CreateEnvironmentOptions(arguments + " --autoplay-policy=no-user-gesture-required");
@@ -33,6 +40,7 @@ internal static class Program
         var blocker = new AdBlocker(allowlist); blocker.Attach(core);
         var extension = new AdProtection(); await extension.InitializeAsync(core, Work);
         Console.WriteLine("Runtime=" + env.BrowserVersionString + "; blocker=" + extension.Available + "; failure=" + extension.Failure);
+        Check(extension.Available && extension.Failure is null, "O teste real precisa carregar o bloqueador atualizado.");
         var document = new DocumentProtection(); await document.SetEnabledAsync(core, true);
         await AttachRecoveryAsync(core);
         var faultUntil = DateTimeOffset.UtcNow.AddSeconds(25); var injected = 0;
@@ -64,12 +72,22 @@ internal static class Program
         foreach (var enabled in injectFault ? new[] { true } : new[] { true, false })
         {
             await extension.SetEnabledAsync(enabled); blocker.Enabled = enabled; await document.SetEnabledAsync(core, enabled);
-            core.Navigate("https://www.youtube.com/watch?v=ZvXjl20nB6Q");
+            core.Navigate(probeUrl);
             for (var count = 0; count < (injectFault ? 10 : 4); count++)
             {
                 await Task.Delay(5000);
                 if (count == 0) await core.ExecuteScriptAsync("(() => {const p=document.querySelector('#movie_player');if(typeof p?.loadVideoById==='function'){window.probeRetries=0;const original=p.loadVideoById;p.loadVideoById=function(...args){window.probeRetries++;return original.apply(this,args)}}})()");
                 Console.WriteLine("PROBE protection=" + enabled + " " + await core.ExecuteScriptAsync("JSON.stringify({video:Array.from(document.querySelectorAll('video')).map(v=>({time:v.currentTime,duration:v.duration,ready:v.readyState,network:v.networkState,paused:v.paused,error:v.error?.code})),state:document.querySelector('#movie_player')?.getPlayerState?.(),reloadAPI:typeof document.querySelector('#movie_player')?.loadVideoById,playability:document.querySelector('#movie_player')?.getPlayerResponse?.()?.playabilityStatus?.status,recovery:!!window.__COTTON_YOUTUBE_PLAYBACK__,retries:window.probeRetries,notice:!!document.querySelector('[data-cotton-video-recovery]'),error:document.querySelector('.ytp-error-content-wrap-reason')?.textContent})"));
+            }
+            if (!injectFault)
+            {
+                var expectedId = new Uri(probeUrl).Query.TrimStart('?').Split('&').First(p => p.StartsWith("v=", StringComparison.Ordinal))[2..];
+                var playing = "(() => { const p = document.querySelector('#movie_player'); const v = document.querySelector('video'); return p?.getVideoData?.()?.video_id === "
+                    + JsonSerializer.Serialize(expectedId) + " && p?.getPlayerResponse?.()?.playabilityStatus?.status === 'OK' && v?.readyState >= 2 && v.currentTime > 0 && !v.error; })()";
+                Check(await core.ExecuteScriptAsync(playing) == "true", "O vídeo solicitado deve reproduzir com proteção " + enabled + ".");
+                var installed = await core.Profile.GetBrowserExtensionsAsync();
+                Check(installed.Single(e => e.Id == new Uri(extension.DashboardUrl!).Host).IsEnabled == enabled, "O bloqueador deve permanecer no estado solicitado durante a reprodução.");
+                Console.WriteLine("PASS: vídeo solicitado reproduziu com proteção=" + enabled + ".");
             }
         }
         if (injectFault)

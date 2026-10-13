@@ -6,6 +6,8 @@ internal sealed class BookmarkManagerView : UserControl
     private readonly ComboBox _folders = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200, AccessibleName = "Pasta de favoritos" };
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, HideSelection = false, BorderStyle = BorderStyle.None, AccessibleName = "Favoritos da pasta" };
     private readonly FlowLayoutPanel _tools = new() { Dock = DockStyle.Top, WrapContents = true, AutoSize = true };
+    private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 44, AutoEllipsis = true, Visible = false, AccessibleName = "Estado dos favoritos" };
+    private bool _reloading;
     public event Action<string>? OpenRequested;
     public event Action? Changed;
     public BookmarkManagerView(BookmarkStore store)
@@ -21,8 +23,8 @@ internal sealed class BookmarkManagerView : UserControl
         Add("Ordenar A–Z", _store.Sort);
         Add("Importar HTML…", () => { using var dialog = new OpenFileDialog { Filter = "Favoritos HTML|*.html;*.htm" }; if (dialog.ShowDialog(this) == DialogResult.OK) { if (new FileInfo(dialog.FileName).Length > 10 * 1024 * 1024) throw new InvalidDataException("O arquivo deve ter até 10 MB."); var count = _store.ImportHtml(File.ReadAllText(dialog.FileName)); MessageBox.Show(this, $"{count} favorito(s) importado(s).", "Importar favoritos"); } });
         Add("Exportar HTML…", () => { using var dialog = new SaveFileDialog { Filter = "Favoritos HTML|*.html", FileName = "Favoritos-CottonBrowser.html" }; if (dialog.ShowDialog(this) == DialogResult.OK) File.WriteAllText(dialog.FileName, _store.ExportHtml()); });
-        _folders.SelectedIndexChanged += (_, _) => RefreshList(); _list.DoubleClick += (_, _) => Open();
-        Controls.Add(_list); Controls.Add(_tools); Resize += (_, _) => { _list.Columns[0].Width = Math.Max(100, _list.ClientSize.Width / 3); _list.Columns[1].Width = Math.Max(150, _list.ClientSize.Width * 2 / 3 - 20); };
+        _folders.SelectedIndexChanged += (_, _) => { if (!_reloading) RefreshList(); }; _list.DoubleClick += (_, _) => Open();
+        Controls.Add(_list); Controls.Add(_status); Controls.Add(_tools); Resize += (_, _) => { _list.Columns[0].Width = Math.Max(100, _list.ClientSize.Width / 3); _list.Columns[1].Width = Math.Max(150, _list.ClientSize.Width * 2 / 3 - 20); };
         Reload(); ApplyTheme();
     }
     private string Folder => _folders.SelectedIndex > 1 ? _folders.SelectedItem as string ?? "" : "";
@@ -30,7 +32,7 @@ internal sealed class BookmarkManagerView : UserControl
     private void Add(string text, Action action)
     {
         var button = new Button { Text = text, AutoSize = true, AccessibleName = text, FlatStyle = FlatStyle.Flat, Margin = new Padding(3), Cursor = Cursors.Hand };
-        button.Click += (_, _) => { var selected = Selected?.Url; try { action(); Reload(selected); Changed?.Invoke(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException) { UiDialogs.Error(this, ex); } };
+        button.Click += (_, _) => { var selected = Selected?.Url; try { action(); Reload(selected); Changed?.Invoke(); } catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException or System.Text.RegularExpressions.RegexMatchTimeoutException) { UiDialogs.Error(this, ex); } };
         _tools.Controls.Add(button);
     }
     private void Edit(Bookmark? bookmark)
@@ -42,21 +44,37 @@ internal sealed class BookmarkManagerView : UserControl
     private void Open() { if (Selected is { } b) OpenRequested?.Invoke(b.Url); }
     public void Reload(string? selected = null)
     {
-        var folder = _folders.SelectedItem as string;
-        _folders.Items.Clear(); _folders.Items.Add("Todas as pastas"); _folders.Items.Add("Sem pasta"); _folders.Items.AddRange(_store.Folders().Cast<object>().ToArray());
-        _folders.SelectedItem = folder ?? "Todas as pastas"; if (_folders.SelectedIndex < 0) _folders.SelectedIndex = 0;
-        RefreshList(selected);
+        _reloading = true;
+        try
+        {
+            var folders = _store.Folders().Cast<object>().ToArray();
+            var folder = _folders.SelectedItem as string;
+            _folders.Items.Clear(); _folders.Items.Add("Todas as pastas"); _folders.Items.Add("Sem pasta"); _folders.Items.AddRange(folders);
+            _folders.SelectedItem = folder ?? "Todas as pastas"; if (_folders.SelectedIndex < 0) _folders.SelectedIndex = 0;
+            RefreshList(selected);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException)
+        { ShowReadError(ex); }
+        finally { _reloading = false; }
     }
     private void RefreshList(string? selected = null)
     {
         _list.BeginUpdate();
-        try { _list.Items.Clear(); foreach (var b in _store.Load().Where(b => _folders.SelectedIndex == 0 || b.Folder.Equals(Folder, StringComparison.OrdinalIgnoreCase))) { var item = new ListViewItem([b.Title, b.Url]) { Tag = b, ToolTipText = b.Folder }; _list.Items.Add(item); if (b.Url == selected) item.Selected = true; } }
+        try { _list.Items.Clear(); foreach (var b in _store.Load().Where(b => _folders.SelectedIndex == 0 || b.Folder.Equals(Folder, StringComparison.OrdinalIgnoreCase))) { var item = new ListViewItem([b.Title, b.Url]) { Tag = b, ToolTipText = b.Folder }; _list.Items.Add(item); if (b.Url == selected) item.Selected = true; } _status.Text = ""; _status.Visible = false; }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException)
+        { ShowReadError(ex); }
         finally { _list.EndUpdate(); }
+    }
+    private void ShowReadError(Exception error)
+    {
+        _list.Items.Clear();
+        _status.Text = "Não foi possível ler os favoritos. O arquivo foi preservado. " + error.Message;
+        _status.Visible = true;
     }
     public void ApplyTheme()
     {
-        BackColor = _tools.BackColor = _list.BackColor = _folders.BackColor = Theme.Surface;
-        ForeColor = _list.ForeColor = _folders.ForeColor = Theme.Ink;
+        BackColor = _tools.BackColor = _list.BackColor = _folders.BackColor = _status.BackColor = Theme.Surface;
+        ForeColor = _list.ForeColor = _folders.ForeColor = Theme.Ink; _status.ForeColor = Theme.InkMuted;
         foreach (Control child in _tools.Controls) { child.BackColor = Theme.Surface; child.ForeColor = Theme.Ink; }
     }
 }

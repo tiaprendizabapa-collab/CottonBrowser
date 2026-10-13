@@ -5,8 +5,9 @@ using CottonBrowser.Shared;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        BrowserPaths.Initialize([], Path.GetFullPath(Path.Combine(".verification", "navigation-profile-" + Guid.NewGuid().ToString("N"))));
         using var tabs = new BrowserTabControl();
         var allowlist = new SiteAllowlist(new SiteExceptionStore(Path.Combine(Path.GetTempPath(),
             "CottonTabChecks-" + Guid.NewGuid().ToString("N") + ".json")));
@@ -58,6 +59,17 @@ internal static class Program
         MenuChecks.Run();
         OrganizationChecks.Run();
         AboutChecks.Run();
+        if (args.Contains("--webview"))
+        {
+            using var runner = new Form { Opacity = 0, ShowInTaskbar = false };
+            runner.Shown += async (_, _) =>
+            {
+                try { await ContextMenuChecks.RunAsync(); }
+                catch (Exception ex) { Console.Error.WriteLine(ex); Environment.ExitCode = 1; }
+                finally { runner.Close(); }
+            };
+            Application.Run(runner);
+        }
     }
 
     private static void MiddleClick(Control header) =>

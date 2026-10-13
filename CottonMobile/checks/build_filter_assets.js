@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
-const source = path.join(root, 'LeanBrowser/Extensions/uBlockOriginLite/2026.914.1325');
+const source = path.join(__dirname, 'filter-source/uBOLite-2026.914.1325');
 const assets = path.join(root, 'CottonMobile/app/src/main/assets');
 const rules = JSON.parse(fs.readFileSync(path.join(source, 'easylist.json'), 'utf8'));
 const domains = new Set();

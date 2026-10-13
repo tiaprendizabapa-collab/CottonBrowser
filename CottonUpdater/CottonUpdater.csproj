@@ -13,4 +13,8 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\InstallationLock.cs" Link="InstallationLock.cs" />
+    <Compile Include="..\Shared\BrowserPackage.cs" Link="BrowserPackage.cs" />
+  </ItemGroup>
 </Project>

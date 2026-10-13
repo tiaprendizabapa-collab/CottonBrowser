@@ -1,4 +1,4 @@
-import { createStore } from './state.js';
+import { createStore, createRequestGate } from './state.js';
 import { createDemoApi, createHttpApi, ApiError } from './api.js';
 import { renderOverview } from './overview.js';
 import { renderSecurity } from './security.js';
@@ -7,7 +7,8 @@ const root = document.querySelector('#content');
 const scopePicker = document.querySelector('#scope-picker');
 const store = createStore({ page: location.hash === '#security' ? 'security' : 'overview',
   scope: 'global', token: '', demo: false, draft: null, activeSites: null, dirty: false,
-  loading: false, message: '', messageType: '', error: '' });
+  loading: false, pending: false, message: '', messageType: '', error: '' });
+const requests = createRequestGate();
 const httpApi = createHttpApi(() => store.get().token);
 let demoApi = createDemoApi();
 
@@ -16,7 +17,7 @@ function renderChrome(state) {
   document.querySelector('#connection-mode').textContent = state.demo ? 'Demonstração' :
     state.token ? 'Admin conectado' : 'Desconectado';
   document.querySelector('#disconnect').hidden = !state.token && !state.demo;
-  scopePicker.disabled = !state.token && !state.demo;
+  scopePicker.disabled = state.pending || !state.token && !state.demo;
   scopePicker.value = state.scope;
   document.querySelectorAll('[data-page]').forEach(link => {
     link.classList.toggle('active', link.dataset.page === state.page);
@@ -61,15 +62,18 @@ function renderPage() {
 }
 
 async function loadPolicy() {
-  const scope = store.get().scope;
-  store.set({ loading: true, message: '', error: '' });
+  const state = store.get();
+  const scope = state.scope;
+  const isCurrent = requests.begin();
+  const api = state.demo ? demoApi : httpApi;
+  store.set({ loading: true, pending: false, message: '', error: '' });
   renderPage();
   try {
-    const api = store.get().demo ? demoApi : httpApi;
     const [draft, activeSites] = await Promise.all([api.getPolicy(scope), api.getActiveSites()]);
-    if (scope !== store.get().scope) return;
+    if (!isCurrent()) return;
     store.set({ draft, activeSites, dirty: false, loading: false });
   } catch (error) {
+    if (!isCurrent()) return;
     if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
       store.set({ token: '', draft: null, activeSites: null, loading: false,
         error: 'Token inválido ou ausente. Confira COTTON_ADMIN_TOKEN.' });
@@ -87,11 +91,13 @@ const actions = {
   refresh() { renderPage(); },
   async save() {
     const state = store.get();
+    if (state.pending) return;
     if (!state.draft || !state.draft.name.trim()) {
       store.set({ message: 'Informe um nome para o rascunho.', messageType: 'error' });
       return renderPage();
     }
-    store.set({ message: 'Salvando…', messageType: '' });
+    const isCurrent = requests.begin();
+    store.set({ pending: true, message: 'Salvando…', messageType: '' });
     renderPage();
     try {
       const draft = state.draft;
@@ -99,12 +105,14 @@ const actions = {
         urls: draft.urls, extensions: draft.extensions, dlp: draft.dlp, branding: draft.branding };
       const api = state.demo ? demoApi : httpApi;
       const saved = await api.savePolicy(state.scope, request);
-      store.set({ draft: saved, dirty: false,
+      if (!isCurrent()) return;
+      store.set({ draft: saved, dirty: false, pending: false,
         message: state.demo ? 'Salvo na demonstração desta aba.' :
           'Rascunho salvo. Para aplicar os sites permitidos, clique em Ativar sites neste computador.',
         messageType: 'success' });
     } catch (error) {
-      store.set({ message: error.status === 409 ?
+      if (!isCurrent()) return;
+      store.set({ pending: false, message: error.status === 409 ?
         'Conflito de revisão. Copie suas alterações e recarregue o escopo antes de salvar.' :
         error.message || 'Falha ao salvar.', messageType: 'error' });
     }
@@ -112,18 +120,23 @@ const actions = {
   },
   async applySites() {
     const state = store.get();
+    if (state.pending) return;
     if (state.demo || state.scope !== 'global' || state.dirty || !state.draft) {
       store.set({ message: 'Conecte-se, selecione Toda a empresa e salve as alterações antes de ativar.', messageType: 'error' });
       return renderPage();
     }
-    store.set({ message: 'Ativando sites neste computador…', messageType: '' });
+    const isCurrent = requests.begin();
+    store.set({ pending: true, message: 'Ativando sites neste computador…', messageType: '' });
     renderPage();
     try {
       await httpApi.applySites(state.draft.revision);
+      if (!isCurrent()) return;
       const activeSites = await httpApi.getActiveSites();
-      store.set({ activeSites, message: `${activeSites.allowedOrigins.length} site(s) ativo(s) neste computador. Reabra ou atualize a página no CottonBrowser.`, messageType: 'success' });
+      if (!isCurrent()) return;
+      store.set({ pending: false, activeSites, message: `${activeSites.allowedOrigins.length} site(s) ativo(s) neste computador. Reabra ou atualize a página no CottonBrowser.`, messageType: 'success' });
     } catch (error) {
-      store.set({ message: error.message || 'Falha ao ativar sites.', messageType: 'error' });
+      if (!isCurrent()) return;
+      store.set({ pending: false, message: error.message || 'Falha ao ativar sites.', messageType: 'error' });
     }
     renderPage();
   }
@@ -131,7 +144,9 @@ const actions = {
 
 document.querySelector('#disconnect').addEventListener('click', () => {
   if (store.get().dirty && !confirm('Descartar alterações não salvas?')) return;
-  store.set({ token: '', demo: false, draft: null, dirty: false, error: '', message: '' });
+  requests.invalidate();
+  store.set({ token: '', demo: false, draft: null, activeSites: null, dirty: false,
+    loading: false, pending: false, error: '', message: '' });
   renderPage();
 });
 scopePicker.addEventListener('change', async event => {

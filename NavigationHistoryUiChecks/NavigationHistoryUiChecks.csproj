@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="../LeanBrowser/AboutUpdatesView.cs" Link="AboutUpdatesView.cs" />
     <Compile Include="../LeanBrowser/BrowserUpdateService.cs" Link="BrowserUpdateService.cs" />
+    <Compile Include="../Shared/BrowserPackage.cs" Link="BrowserPackage.cs" />
     <Compile Include="../LeanBrowser/UpdateCheckHistoryStore.cs" Link="UpdateCheckHistoryStore.cs" />
     <Compile Include="../LeanBrowser/NavigationHistoryStore.cs" Link="NavigationHistoryStore.cs" />
     <Compile Include="../LeanBrowser/BrowserPreferences.cs" Link="BrowserPreferences.cs" />

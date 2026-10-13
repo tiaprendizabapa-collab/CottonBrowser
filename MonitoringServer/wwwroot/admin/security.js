@@ -142,4 +142,6 @@ export function renderSecurity(root, state, actions) {
     markDirty();
   });
   root.querySelector('#save-policy').addEventListener('click', () => actions.save());
+  if (state.pending)
+    root.querySelectorAll('input, button').forEach(element => { element.disabled = true; });
 }

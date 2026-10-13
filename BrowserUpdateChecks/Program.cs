@@ -84,6 +84,49 @@ try
         catch (InvalidDataException) { Check(true, "tampered package rejected"); }
     }
 
+    await RejectPackage(BuildPackage(4096, includeBrowser: false), "package without browser rejected before restart");
+    await RejectPackage(BuildPackage(4096, includeUpdater: false), "package without updater rejected before restart");
+    await RejectPackage(BuildPackage(0), "empty updater rejected");
+    await RejectPackage(BuildPackage(4096, validExecutable: false), "invalid executable header rejected before restart");
+    await RejectPackage(BuildPackage(4096, includeBridge: false), "package without internal pages rejected");
+    await RejectPackage(BuildPackage(4096, extraFiles: ["cottonupdater.exe"]), "case-insensitive duplicate rejected");
+    await RejectPackage(BuildPackage(4096, extraFiles: ["Assets/Bridge/../outside.html"]), "package traversal rejected");
+    await RejectPackage(BuildPackage(4096, extraFiles: ["Assets/Bridge/NUL.txt"]), "Windows device path rejected");
+    await RejectPackage(BuildPackage(4096, extraFiles: ["unexpected.dll"]), "unexpected package file rejected");
+    await RejectPackage(BuildPackage(4096, extraFiles: ["Assets/Bridge/page", "Assets/Bridge/page/index.html"]),
+        "file-directory conflict rejected");
+    await RejectPackage(BuildPackage(4096, extraFiles: ["../outside/"]), "unsafe directory entry rejected");
+    var understatedPackage = BuildPackage(4096);
+    for (var index = 0; index <= understatedPackage.Length - 46; index++)
+    {
+        if (BitConverter.ToUInt32(understatedPackage, index) != 0x02014b50) continue;
+        if (Encoding.UTF8.GetString(understatedPackage, index + 46,
+                BitConverter.ToUInt16(understatedPackage, index + 28)) != "CottonUpdater.exe") continue;
+        BitConverter.GetBytes(1u).CopyTo(understatedPackage, index + 24);
+        break;
+    }
+    await RejectPackage(understatedPackage, "updater with truncated declared executable size rejected");
+
+    async Task RejectPackage(byte[] bytes, string description)
+    {
+        using var invalidClient = new HttpClient(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(bytes)
+        }));
+        using var invalidService = new BrowserUpdateService(invalidClient, stagingRoot);
+        var invalidUpdate = new BrowserUpdate(new Version(1, 0, 1, 0), "v1.0.1", new Uri(assetUrl),
+            Convert.ToHexString(SHA256.HashData(bytes)), bytes.LongLength);
+        var stagedBefore = Directory.EnumerateDirectories(stagingRoot).Count();
+        try
+        {
+            await invalidService.DownloadAsync(invalidUpdate, null, CancellationToken.None);
+            Check(false, description);
+        }
+        catch (InvalidDataException) { Check(true, description); }
+        Check(Directory.EnumerateDirectories(stagingRoot).Count() == stagedBefore,
+            description + " clears failed staging");
+    }
+
     using var unavailableClient = new HttpClient(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
     using var unavailableService = new BrowserUpdateService(unavailableClient, stagingRoot);
     try
@@ -153,22 +196,57 @@ if (failures.Count > 0)
 Console.WriteLine($"{checkCount} verificações do atualizador passaram.");
 return 0;
 
-static byte[] BuildPackage(int updaterSize)
+static byte[] BuildPackage(int updaterSize, bool includeBrowser = true, bool includeUpdater = true,
+    bool includeBridge = true, bool validExecutable = true, params string[] extraFiles)
 {
     using var buffer = new MemoryStream();
     using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
     {
-        var entry = archive.CreateEntry("CottonUpdater.exe", CompressionLevel.Fastest);
-        using var output = entry.Open();
-        var block = new byte[64 * 1024];
-        for (var remaining = updaterSize; remaining > 0;)
+        if (includeBrowser)
         {
-            var count = Math.Min(remaining, block.Length);
-            output.Write(block, 0, count);
-            remaining -= count;
+            using var browser = archive.CreateEntry("CottonBrowser.exe").Open();
+            var executable = new byte[4096];
+            if (validExecutable) WriteExecutableHeader(executable);
+            browser.Write(executable);
+        }
+        if (includeUpdater)
+        {
+            var entry = archive.CreateEntry("CottonUpdater.exe", CompressionLevel.Fastest);
+            using var output = entry.Open();
+            var block = new byte[64 * 1024];
+            if (validExecutable) WriteExecutableHeader(block);
+            for (var remaining = updaterSize; remaining > 0;)
+            {
+                var count = Math.Min(remaining, block.Length);
+                output.Write(block, 0, count);
+                remaining -= count;
+                Array.Clear(block);
+            }
+        }
+        if (includeBridge)
+        {
+            foreach (var page in new[] { "index.html", "newtab.html", "private.html" })
+            {
+                using var output = archive.CreateEntry("Assets/Bridge/" + page).Open();
+                output.WriteByte(1);
+            }
+        }
+        foreach (var name in extraFiles)
+        {
+            var entry = archive.CreateEntry(name);
+            if (name.EndsWith('/')) continue;
+            using var output = entry.Open();
+            output.WriteByte(1);
         }
     }
     return buffer.ToArray();
+}
+
+static void WriteExecutableHeader(byte[] bytes)
+{
+    bytes[0] = (byte)'M'; bytes[1] = (byte)'Z';
+    BitConverter.GetBytes(128).CopyTo(bytes, 60);
+    bytes[128] = (byte)'P'; bytes[129] = (byte)'E';
 }
 
 sealed class FakeHandler(Func<HttpRequestMessage, HttpResponseMessage> send) : HttpMessageHandler

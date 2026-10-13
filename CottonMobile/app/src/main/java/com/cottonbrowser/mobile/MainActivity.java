@@ -90,6 +90,7 @@ public final class MainActivity extends Activity {
     private static final int MUTED = 0xFFB4B4CB;
     private static final int ACCENT = 0xFFB69BFF;
     private static final int FILE_CHOOSER_REQUEST = 101;
+    private static final String FILE_CHOOSER_PENDING_STATE = "file_chooser_pending";
     private static final int MAX_SELECTED_FILES = 16;
     private static final String PREFS_NAME = "cotton_mobile";
     private static final String BOOKMARKS_KEY = "bookmarks";
@@ -131,11 +132,14 @@ public final class MainActivity extends Activity {
     private CheckBox suppressUpdateNotice;
     private String availableUpdateTag;
     private ValueCallback<Uri[]> fileChooserCallback;
+    private BrowserTab fileChooserTab;
     private boolean fileChooserAllowsMultiple;
+    private boolean fileChooserPending;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        fileChooserPending = state != null && state.getBoolean(FILE_CHOOSER_PENDING_STATE);
         getWindow().setStatusBarColor(HEADER);
         getWindow().setNavigationBarColor(HEADER);
         WebView.setWebContentsDebuggingEnabled(false);
@@ -539,6 +543,7 @@ public final class MainActivity extends Activity {
         if (index < 0) return;
         boolean wasActive = activeTab == tab;
         if (wasActive) hideFindBar();
+        if (fileChooserTab == tab) finishFileChooser(null);
         tabs.remove(index);
         if (wasActive) activeTab = null;
         pageHost.removeView(tab.page);
@@ -605,6 +610,12 @@ public final class MainActivity extends Activity {
             String localUrl = "http://" + input;
             return isWebUrl(localUrl) ? localUrl : null;
         }
+        // A dotted host followed by a numeric port is an address, although its
+        // prefix also satisfies the syntax of a URI scheme (example.org:8443).
+        if (input.matches("^[^\\s/?#:]+\\.[^\\s/?#:]+:[0-9]+(?:[/?#].*)?$")) {
+            String url = "https://" + input;
+            return isWebUrl(url) ? url : null;
+        }
         if (input.matches("(?i)^[a-z][a-z0-9+.-]*:.*")) {
             return isWebUrl(input) ? input : null;
         }
@@ -627,6 +638,7 @@ public final class MainActivity extends Activity {
         tab.navigationToken++;
         if (warnBeforeHttp(tab, url, () -> navigate(tab, url))) return;
         tab.url = url;
+        tab.documentUrl = url;
         tab.error.setVisibility(View.GONE);
         tab.home.setVisibility(View.GONE);
         tab.webView.setVisibility(View.VISIBLE);
@@ -1236,6 +1248,16 @@ public final class MainActivity extends Activity {
                 && uri.getHost() != null && !uri.getHost().isEmpty();
     }
 
+    private static boolean isSameDocumentUrl(String first, String second) {
+        if (first == null || second == null) return false;
+        // Fragment identifiers are part of the displayed address, not the network request.
+        int firstEnd = first.indexOf('#');
+        int secondEnd = second.indexOf('#');
+        if (firstEnd < 0) firstEnd = first.length();
+        if (secondEnd < 0) secondEnd = second.length();
+        return firstEnd == secondEnd && first.regionMatches(0, second, 0, firstEnd);
+    }
+
     private void showError(BrowserTab tab, String details) {
         tab.loading = false;
         tab.errorDetails.setText(details);
@@ -1277,7 +1299,12 @@ public final class MainActivity extends Activity {
                     return true;
                 }
                 tab.navigationToken++;
-                return warnBeforeHttp(tab, url, () -> view.loadUrl(url));
+                if (warnBeforeHttp(tab, url, () -> {
+                    tab.documentUrl = url;
+                    view.loadUrl(url);
+                })) return true;
+                tab.documentUrl = url;
+                return false;
             }
             if ("about:blank".equals(url)) return false;
             openExternal(url);
@@ -1287,7 +1314,9 @@ public final class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             if (!tabs.contains(tab)) return;
+            if (fileChooserTab == tab) finishFileChooser(null);
             if (tab == activeTab) hideFindBar();
+            tab.documentUrl = url;
             tab.loading = true;
             tab.progress = 5;
             tab.blockedCount.set(0);
@@ -1304,6 +1333,7 @@ public final class MainActivity extends Activity {
 
         @Override
         public void onPageCommitVisible(WebView view, String url) {
+            if (!isCurrentDocumentCallback(view, url)) return;
             if (isWebUrl(url)) {
                 tab.popupPending = false;
                 tab.popupSourceUrl = null;
@@ -1313,19 +1343,40 @@ public final class MainActivity extends Activity {
 
         @Override
         public void onPageFinished(WebView view, String url) {
-            if (!tabs.contains(tab)) return;
+            // A canceled load can finish after a newer document has started.
+            // Its URL and loading state must not replace the current document.
+            if (!isCurrentDocumentCallback(view, url)) return;
             tab.loading = false;
             tab.progress = 100;
-            if (isWebUrl(url)) tab.url = url;
+            // Keep a History API/fragment change made while this document loaded.
+            String currentUrl = view.getUrl();
+            if (isWebUrl(currentUrl)) tab.url = currentUrl;
             if (tab.error.getVisibility() != View.VISIBLE)
+                recordHistory(currentUrl, tab.title);
+            ensureProtectionScripts(view, currentUrl);
+            if (tab == activeTab) updateControls();
+        }
+
+        private boolean isCurrentDocumentCallback(WebView view, String url) {
+            return tabs.contains(tab) && url != null && (url.equals(tab.documentUrl)
+                    || (url.equals(tab.url) && url.equals(view.getUrl())));
+        }
+
+        @Override
+        public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            if (!tabs.contains(tab) || !isWebUrl(url) || !url.equals(view.getUrl())) return;
+            // Fragment and History API navigations do not start a document load.
+            tab.url = url;
+            if (!tab.loading && tab.error.getVisibility() != View.VISIBLE)
                 recordHistory(url, tab.title);
-            ensureProtectionScripts(view, url);
             if (tab == activeTab) updateControls();
         }
 
         @Override
         public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-            if (request.isForMainFrame()) showError(tab, error.getDescription().toString());
+            if (tabs.contains(tab) && request.isForMainFrame()
+                    && isSameDocumentUrl(request.getUrl().toString(), tab.url))
+                showError(tab, error.getDescription().toString());
         }
 
         @Override
@@ -1336,7 +1387,10 @@ public final class MainActivity extends Activity {
         @Override
         public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
             handler.cancel();
-            showError(tab, "A conexão não é segura. A página foi bloqueada.");
+            // A certificate failure in an image or iframe cancels that resource,
+            // while a failure in the current main document gets the page overlay.
+            if (tabs.contains(tab) && isSameDocumentUrl(error.getUrl(), tab.url))
+                showError(tab, "A conexão não é segura. A página foi bloqueada.");
         }
 
     }
@@ -1394,18 +1448,25 @@ public final class MainActivity extends Activity {
 
         @Override
         public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
-            if (fileChooserCallback != null) fileChooserCallback.onReceiveValue(null);
+            // The Android result code identifies the native picker, not its WebView
+            // callback. Wait for an old picker result before accepting another session.
+            if (fileChooserPending) {
+                callback.onReceiveValue(null);
+                return true;
+            }
+            finishFileChooser(null);
             fileChooserCallback = callback;
+            fileChooserTab = tab;
             fileChooserAllowsMultiple = params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
             try {
                 Intent picker = params.createIntent();
                 picker.addCategory(Intent.CATEGORY_OPENABLE);
+                fileChooserPending = true;
                 startActivityForResult(picker, FILE_CHOOSER_REQUEST);
                 return true;
             } catch (Exception error) {
-                fileChooserCallback = null;
-                fileChooserAllowsMultiple = false;
-                callback.onReceiveValue(null);
+                fileChooserPending = false;
+                finishFileChooser(null);
                 toast("Nenhum aplicativo para escolher arquivo");
                 return true;
             }
@@ -1415,11 +1476,19 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == FILE_CHOOSER_REQUEST && fileChooserCallback != null) {
-            fileChooserCallback.onReceiveValue(verifiedPickerUris(resultCode, data));
-            fileChooserCallback = null;
-            fileChooserAllowsMultiple = false;
+        if (requestCode == FILE_CHOOSER_REQUEST) {
+            fileChooserPending = false;
+            if (fileChooserCallback != null)
+                finishFileChooser(tabs.contains(fileChooserTab) ? verifiedPickerUris(resultCode, data) : null);
         }
+    }
+
+    private void finishFileChooser(Uri[] selected) {
+        ValueCallback<Uri[]> callback = fileChooserCallback;
+        fileChooserCallback = null;
+        fileChooserTab = null;
+        fileChooserAllowsMultiple = false;
+        if (callback != null) callback.onReceiveValue(selected);
     }
 
     /** Never pass an untrusted picker URI to WebView without a picker read grant. */
@@ -1487,12 +1556,15 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean(FILE_CHOOSER_PENDING_STATE, fileChooserPending);
+        super.onSaveInstanceState(state);
+    }
+
+    @Override
     protected void onDestroy() {
         ServiceWorkerController.getInstance().setServiceWorkerClient(null);
-        if (fileChooserCallback != null) {
-            fileChooserCallback.onReceiveValue(null);
-            fileChooserCallback = null;
-        }
+        finishFileChooser(null);
         for (BrowserTab tab : tabs) {
             pageHost.removeView(tab.page);
             if (tab.protectionScriptHandler != null) tab.protectionScriptHandler.remove();
@@ -1553,6 +1625,7 @@ public final class MainActivity extends Activity {
         TextView errorDetails;
         String title;
         volatile String url;
+        String documentUrl;
         Bitmap favicon;
         final AtomicInteger blockedCount = new AtomicInteger();
         ScriptHandler protectionScriptHandler;

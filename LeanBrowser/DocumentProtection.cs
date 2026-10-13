@@ -8,12 +8,11 @@ public sealed class DocumentProtection
 {
     private string? _scriptId;
     private static readonly Lazy<string> Script = new(() =>
-        "(() => { if (!/^https?:$/.test(location.protocol)) return;\n" +
+        "(() => { if (!/^https?:$/.test(location.protocol) || location.hostname === 'youtube.com' || location.hostname.endsWith('.youtube.com')) return;\n" +
         Read("Recovery.dialog-guard.js") + "\n" +
         Read("Recovery.overlay-cleaner.js") + "\n" +
         "window.__BC_DIALOGS_113__?.configure('known');\n" +
-        "if (!(location.hostname === 'youtube.com' || location.hostname.endsWith('.youtube.com'))) window.__BC_CLEANER_113__?.configure(true);\n" +
-        Read("youtube-protection.js") + "\n})();");
+        "window.__BC_CLEANER_113__?.configure(true);\n})();");
 
     private static string Read(string name)
     {

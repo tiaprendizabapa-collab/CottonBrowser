@@ -95,3 +95,14 @@ Para verificar modelos e concorrência sem pacotes de teste adicionais:
 ```powershell
 dotnet run --project .\MonitoringServerChecks
 ```
+
+Com Node.js instalado, execute também as regressões de respostas assíncronas do
+Admin e da API HTTP (depois de compilar o projeto em Debug):
+
+```powershell
+node --experimental-vm-modules .\MonitoringServerChecks\AdminDashboardChecks.mjs
+node .\MonitoringServerChecks\HttpApiChecks.mjs
+```
+
+Os checks HTTP iniciam e encerram um servidor em uma porta temporária de loopback,
+com tokens próprios. Não ativam exceções de sites nem acessam serviços externos.

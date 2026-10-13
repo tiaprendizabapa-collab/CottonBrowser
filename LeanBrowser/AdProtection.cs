@@ -8,8 +8,8 @@ namespace LeanBrowser;
 /// <summary>Uma extensão por perfil, instalada antes da primeira navegação.</summary>
 public sealed class AdProtection
 {
-    public const string Version = "2026.914.1325";
-    public const string PackageHash = "4a8d6c13f772dd53e0b1c2f7cbb8090d4df72987e723b946aeb8bbcc80921be5";
+    public const string Version = "2026.1006.1931";
+    public const string PackageHash = "dd059665fd1d3195f39ade95d30029b7b2582283365b137f83b2fa18cf9250ee";
     private CoreWebView2BrowserExtension? _extension;
     private Task? _initialization;
     public bool Available => _extension is not null;
@@ -31,7 +31,7 @@ public sealed class AdProtection
             if (!Directory.Exists(directory))
             {
                 using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(
-                    "LeanBrowser.Assets.uBOLite_2026.914.1325.edge.zip")
+                    "LeanBrowser.Assets.uBOLite_2026.1006.1931.edge.zip")
                     ?? throw new FileNotFoundException("Pacote do bloqueador ausente.");
                 using var buffer = new MemoryStream();
                 await stream.CopyToAsync(buffer);
@@ -58,6 +58,9 @@ public sealed class AdProtection
                 await File.WriteAllTextAsync(idFile, _extension.Id);
             }
             await _extension.EnableAsync(Enabled);
+            // Versioned unpacked paths have different extension IDs. Leaving
+            // the old copy enabled would keep its obsolete blocking rules active.
+            await DisablePreviousVersionsAsync(core, root);
         }
         catch (Exception ex)
         {
@@ -71,5 +74,17 @@ public sealed class AdProtection
     {
         if (_extension is not null) await _extension.EnableAsync(enabled);
         Enabled = enabled;
+    }
+
+    private async Task DisablePreviousVersionsAsync(CoreWebView2 core, string root)
+    {
+        var previousIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var idFile in Directory.EnumerateFiles(root, "uBOL-*.id"))
+        {
+            var id = (await File.ReadAllTextAsync(idFile)).Trim();
+            if (id != _extension!.Id && id.Length == 32 && id.All(c => c is >= 'a' and <= 'p')) previousIds.Add(id);
+        }
+        foreach (var installed in await core.Profile.GetBrowserExtensionsAsync())
+            if (previousIds.Contains(installed.Id) && installed.IsEnabled) await installed.EnableAsync(false);
     }
 }

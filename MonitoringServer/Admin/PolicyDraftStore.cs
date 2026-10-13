@@ -35,7 +35,7 @@ public sealed class PolicyDraftStore(SiteExceptionStore siteExceptions)
                 {
                     SiteExceptionAddress.TryNormalizeOrigin(value, out var origin);
                     return origin;
-                }).ToArray(), request.Urls.Blocked.ToArray()),
+                }).ToArray(), request.Urls.Blocked.Select(value => PolicyValidation.NormalizeWebUrl(value)!).ToArray()),
                 Extensions = request.Extensions.ToArray(),
                 Dlp = request.Dlp,
                 Branding = request.Branding with

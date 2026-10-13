@@ -7,18 +7,24 @@ public sealed record BrowserProfile(string Id, string Name);
 
 public static class BrowserPaths
 {
-    public static string Root { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser");
+    private static bool _customRoot;
+    public static string Root { get; private set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LeanBrowser");
     public static string ProfileId { get; private set; } = "default";
     public static string DataDirectory => ForProfile(Root, ProfileId);
-    public static string ThemeDirectory => ProfileId == "default"
+    public static string ThemeDirectory => ProfileId == "default" && !_customRoot
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LeanBrowser") : DataDirectory;
     public static string ForProfile(string root, string id)
     {
         if (id != "default" && !Guid.TryParseExact(id, "N", out _)) throw new ArgumentException("Perfil inválido.");
         return id == "default" ? Path.GetFullPath(root) : Path.Combine(Path.GetFullPath(root), "Profiles", id);
     }
-    public static void Initialize(string[] args)
+    public static void Initialize(string[] args, string? rootDirectory = null)
     {
+        if (rootDirectory is not null)
+        {
+            Root = Path.GetFullPath(rootDirectory);
+            _customRoot = true;
+        }
         var index = Array.IndexOf(args, "--profile");
         if (index >= 0)
         {

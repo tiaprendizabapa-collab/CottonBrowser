@@ -1,32 +1,27 @@
 using System.Diagnostics;
+using CottonBrowser.Shared;
 
 namespace CottonUpdater;
 
 /// <summary>Keeps the browser closed while its installed files are replaced.</summary>
 internal sealed class UpdateInstallGate : IDisposable
 {
-    private readonly Mutex _mutex;
+    private readonly InstallationLock _installation;
 
-    private UpdateInstallGate(Mutex mutex) => _mutex = mutex;
+    private UpdateInstallGate(InstallationLock installation) => _installation = installation;
 
-    internal static UpdateInstallGate Acquire(string browserPath, string mutexName, TimeSpan timeout)
+    internal static UpdateInstallGate Acquire(string browserPath, TimeSpan timeout, string? lockDirectory = null)
     {
-        var mutex = new Mutex(initiallyOwned: false, mutexName);
-        var held = false;
         var elapsed = Stopwatch.StartNew();
+        var installation = InstallationLock.AcquireUpdate(Path.GetDirectoryName(browserPath)!, timeout, lockDirectory);
         try
         {
-            try { held = mutex.WaitOne(timeout); }
-            catch (AbandonedMutexException) { held = true; }
-            if (!held)
-                throw new IOException("Feche todas as janelas do CottonBrowser antes de concluir a atualização.");
-
             while (true)
             {
                 try
                 {
                     using var file = new FileStream(browserPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-                    return new UpdateInstallGate(mutex);
+                    return new UpdateInstallGate(installation);
                 }
                 catch (IOException ex) when ((ex.HResult & 0xFFFF) is 32 or 33)
                 {
@@ -39,15 +34,10 @@ internal sealed class UpdateInstallGate : IDisposable
         }
         catch
         {
-            if (held) mutex.ReleaseMutex();
-            mutex.Dispose();
+            installation.Dispose();
             throw;
         }
     }
 
-    public void Dispose()
-    {
-        _mutex.ReleaseMutex();
-        _mutex.Dispose();
-    }
+    public void Dispose() => _installation.Dispose();
 }

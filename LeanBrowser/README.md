@@ -4,6 +4,8 @@ Navegador para Windows desenvolvido em C# / .NET 8 / WinForms, com o motor
 Microsoft Edge WebView2. Inclui abas, favoritos, downloads, perfis de navegação
 e proteção de anúncios por extensão, filtros de rede e scripts de página.
 
+No YouTube, o bloqueio é feito pelo uBlock Origin Lite com filtros atualizados. O navegador evita aplicar bloqueios adicionais por domínio e scripts de limpeza sobre o player. Ao atualizar o pacote, a versão anterior da extensão é desativada para impedir a sobreposição de regras.
+
 ## Organização e controles
 
 - **Zoom por site:** o tamanho escolhido com o menu ou Ctrl+/Ctrl− é salvo neste perfil e recuperado após reiniciar. Em abas anônimas, o ajuste é temporário. Redefina os sites em Configurações > Aparência.

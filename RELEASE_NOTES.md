@@ -1,5 +1,10 @@
 ## Novidades
 
+- uBlock Origin Lite atualizado com os filtros de 6 de outubro de 2026.
+- Compatibilidade do YouTube: filtros mantidos pelo uBlock substituem o bloqueio adicional do navegador; versões antigas da extensão são desativadas na atualização.
+
+- Corrigido encerramento ao abrir o menu do botão direito e usar a opção de abrir links em uma nova guia.
+
 - Download de apenas áudio convertido automaticamente para MP3, com indicação da etapa de conversão.
 
 - Zoom salvo por site, preservado inclusive após reiniciar o navegador.

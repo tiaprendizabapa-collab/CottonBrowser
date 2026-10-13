@@ -48,13 +48,16 @@ public sealed class BrowserSessionStore(string path)
                 throw new JsonException("Sessão inválida.");
             var windows = document.Windows.Take(20).Select(window =>
             {
-                var tabs = window.Tabs.Where(tab => tab is not null && SessionTabState.IsRestorableUrl(tab.Url))
-                    .Take(200).Select(tab => tab with
+                var retained = window.Tabs.Select((tab, index) => (Tab: tab, Index: index))
+                    .Where(item => item.Tab is not null && SessionTabState.IsRestorableUrl(item.Tab.Url))
+                    .Take(200).ToArray();
+                var tabs = retained.Select(item => item.Tab with
                     {
-                        Title = (tab.Title ?? "Nova aba")[..Math.Min(tab.Title?.Length ?? 8, 512)],
-                        GroupName = string.IsNullOrWhiteSpace(tab.GroupName) ? null : tab.GroupName[..Math.Min(tab.GroupName.Length, 40)]
+                        Title = (item.Tab.Title ?? "Nova aba")[..Math.Min(item.Tab.Title?.Length ?? 8, 512)],
+                        GroupName = string.IsNullOrWhiteSpace(item.Tab.GroupName) ? null : item.Tab.GroupName[..Math.Min(item.Tab.GroupName.Length, 40)]
                     }).ToArray();
-                return new BrowserWindowSession(tabs, Math.Clamp(window.SelectedIndex, 0, Math.Max(0, tabs.Length - 1)));
+                var selected = retained.Count(item => item.Index < window.SelectedIndex);
+                return new BrowserWindowSession(tabs, Math.Clamp(selected, 0, Math.Max(0, tabs.Length - 1)));
             }).Where(window => window.Tabs.Length > 0).ToArray();
             return new(windows, document.CleanShutdown);
         }

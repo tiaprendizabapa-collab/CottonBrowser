@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using CottonBrowser.Shared;
 
 namespace LeanBrowser;
 
@@ -131,15 +132,11 @@ internal sealed class BrowserUpdateService : IDisposable
             }
 
             using var archive = ZipFile.OpenRead(archivePath);
-            var updater = archive.GetEntry("CottonUpdater.exe");
-            if (updater is null)
-                throw new InvalidDataException("O pacote não contém CottonUpdater.exe.");
-            if (updater.Length <= 0 || updater.Length > MaximumUpdaterBytes)
-                throw new InvalidDataException($"O atualizador no pacote tem um tamanho inválido ({updater.Length} bytes).");
-            await using (var source = updater.Open())
-            await using (var destination = new FileStream(updaterPath, FileMode.CreateNew,
-                FileAccess.Write, FileShare.None, 65536, useAsync: true))
-                await source.CopyToAsync(destination, cancellationToken);
+            var files = BrowserPackage.Validate(archive);
+            var updater = files.Single(file => file.RelativePath.Equals("CottonUpdater.exe", StringComparison.OrdinalIgnoreCase));
+            if (updater.Entry.Length > MaximumUpdaterBytes)
+                throw new InvalidDataException($"O atualizador no pacote tem um tamanho inválido ({updater.Entry.Length} bytes).");
+            await BrowserPackage.ExtractAsync(updater, updaterPath, cancellationToken);
 
             return new StagedBrowserUpdate(archivePath, updaterPath);
         }

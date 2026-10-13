@@ -18,6 +18,8 @@
     <WebView2InstallerPath Condition="'$(WebView2InstallerPath)' == ''">..\.tools\prerequisites\MicrosoftEdgeWebView2RuntimeInstallerX64.exe</WebView2InstallerPath>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\Shared\InstallationLock.cs" Link="InstallationLock.cs" />
+    <Compile Include="..\Shared\BrowserPackage.cs" Link="BrowserPackage.cs" />
     <EmbeddedResource Include="Payload.zip" LogicalName="CottonBrowser.Payload.zip" />
     <EmbeddedResource Include="$(WebView2InstallerPath)" LogicalName="CottonBrowser.WebView2Setup.exe" />
   </ItemGroup>

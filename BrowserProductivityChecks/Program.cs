@@ -12,6 +12,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        BrowserPaths.Initialize([], Path.Combine(Work, "browser-data"));
         ApplicationConfiguration.Initialize(); Directory.CreateDirectory(Work);
         try
         {
@@ -152,6 +153,14 @@ internal static class Program
             ((TextBox)Field(view, "_notes")).Text = "Draft note survives marking read";
             Descendants(view).OfType<Button>().Single(b => b.Text == "Marcar lida / não lida").PerformClick();
             Check(readingStore.Load().ReadingList is [{ Read: true, Notes: "Draft note survives marking read" }], "Marking read saves an edited note without overwriting it.");
+            var notes = (TextBox)Field(view, "_notes"); notes.Text = "Retry after a failed save";
+            var readingPath = Path.Combine(Work, "ui-reading.json");
+            var previous = File.ReadAllText(readingPath); File.WriteAllText(readingPath, "{ incomplete");
+            try { Invoke(view, "FlushNotes"); throw new Exception("Expected a failed note save."); }
+            catch (TargetInvocationException ex) when (ex.InnerException is JsonException) { }
+            File.WriteAllText(readingPath, previous); Invoke(view, "FlushNotes");
+            Check(readingStore.Load().ReadingList.Single().Notes == "Retry after a failed save",
+                "Failed saves retain the pending note so retry persists it.");
         }
         Console.WriteLine("PASS: integrated settings, light/dark layouts at 600/1200 pixels and menu navigation.");
     }

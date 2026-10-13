@@ -11,7 +11,7 @@ license is provided in FILTERS-LICENSE.txt. Source snapshot, extraction script
 and modifications are available at:
 https://github.com/tiaprendizabapa-collab/CottonBrowser
 CottonMobile/checks/build_filter_assets.js
-LeanBrowser/Extensions/uBlockOriginLite/2026.914.1325/easylist.json
+CottonMobile/checks/filter-source/uBOLite-2026.914.1325/easylist.json
 
 Changes: only unconditional domain-block rules are extracted; third-party,
 resource-type, URL-path and other conditional block rules are not broadened.

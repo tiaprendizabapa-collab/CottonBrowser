@@ -125,7 +125,9 @@ internal sealed class ProductivityView : UserControl
     private void FlushNotes()
     {
         if (_loading || _editing is null || _editing.Notes == _notes.Text) return;
-        _editing = _editing with { Notes = _notes.Text }; _store.UpdateReading(_editing);
+        var updated = _editing with { Notes = _notes.Text };
+        _store.UpdateReading(updated);
+        _editing = updated;
     }
     private void OpenSelected() => Run(() =>
     {

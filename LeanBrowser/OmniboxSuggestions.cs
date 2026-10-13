@@ -189,16 +189,21 @@ internal sealed class SearchSuggestionClient : IDisposable
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (json.RootElement.ValueKind != JsonValueKind.Array) return Array.Empty<SuggestionItem>();
-            return json.RootElement.EnumerateArray()
-                .Where(item => item.TryGetProperty("phrase", out var phrase)
-                    && phrase.ValueKind == JsonValueKind.String)
-                .Select(item => new SuggestionItem(item.GetProperty("phrase").GetString()!, null))
-                .Where(item => !string.IsNullOrWhiteSpace(item.Text))
-                .Take(8).ToArray();
+            return ParseSuggestions(json.RootElement);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or IOException or ObjectDisposedException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException or IOException or ObjectDisposedException)
         { return Array.Empty<SuggestionItem>(); }
+    }
+
+    internal static IReadOnlyList<SuggestionItem> ParseSuggestions(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Array) return Array.Empty<SuggestionItem>();
+        return root.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("phrase", out var phrase) && phrase.ValueKind == JsonValueKind.String)
+            .Select(item => new SuggestionItem(item.GetProperty("phrase").GetString()!, null))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Text))
+            .Take(8).ToArray();
     }
 
     public void Dispose() => _http.Dispose();

@@ -1,9 +1,12 @@
 using MonitoringServer.Admin;
 using CottonBrowser.Shared;
+using System.Text.Json;
 
 var failures = new List<string>();
+var checkCount = 0;
 void Check(bool condition, string name)
 {
+    checkCount++;
     if (!condition) failures.Add(name);
 }
 
@@ -23,6 +26,14 @@ Check(PolicyValidation.Validate("global", valid with
 }).Count > 0, "conflicting URL lists");
 Check(PolicyValidation.Validate("global", valid with
 {
+    Urls = new UrlPolicy(["https://same.example/"], ["https://SAME.example:443"])
+}).Count > 0, "equivalent root URLs conflict");
+Check(PolicyValidation.Validate("global", valid with
+{
+    Urls = new UrlPolicy([], ["https://blocked.example", "https://blocked.example:443/"])
+}).Count > 0, "equivalent blocked URLs are duplicates");
+Check(PolicyValidation.Validate("global", valid with
+{
     Urls = new UrlPolicy([], ["https://user:pass@example.com/"])
 }).Count > 0, "credentialed URL rejected");
 Check(PolicyValidation.Validate("global", valid with
@@ -33,6 +44,25 @@ Check(PolicyValidation.Validate("global", valid with
 {
     Dlp = new DlpPolicy(true, true)
 }).Count > 0, "unsupported upload enforcement rejected");
+
+var navigation = new NavigationTelemetryEvent("navigation", "user", "session",
+    "https://example.com/path", "example.com", null, "Example", true, DateTimeOffset.UtcNow);
+Check(NavigationTelemetryEvent.IsValid(navigation), "valid navigation event");
+Check(NavigationTelemetryEvent.IsValid(navigation with { EventType = "active_tab" }), "active tab event");
+Check(!NavigationTelemetryEvent.IsValid(null), "null telemetry entry rejected");
+foreach (var field in new[] { "eventType", "userId", "sessionId", "url", "domain" })
+{
+    var payload = JsonSerializer.SerializeToNode(navigation, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+    payload[field] = null;
+    var malformed = payload.Deserialize<NavigationTelemetryEvent>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    Check(!NavigationTelemetryEvent.IsValid(malformed), $"null telemetry {field} rejected without exception");
+}
+Check(!NavigationTelemetryEvent.IsValid(navigation with { Domain = "spoofed.example" }), "spoofed report domain rejected");
+Check(!NavigationTelemetryEvent.IsValid(navigation with { EventType = "unknown" }), "unknown event type rejected");
+Check(!NavigationTelemetryEvent.IsValid(navigation with { SearchTerm = new string('x', 501) }), "oversized search rejected");
+Check(!NavigationTelemetryEvent.IsValid(navigation with { Title = new string('x', 301) }), "oversized title rejected");
+Check(!NavigationTelemetryEvent.IsValid(navigation with { Url = "https://user:secret@example.com/" }), "credentialed telemetry rejected");
+Check(!NavigationTelemetryEvent.IsValid(navigation with { UserId = " " }), "blank telemetry user rejected");
 
 var temporaryDirectory = Path.Combine(Path.GetTempPath(), "cotton-site-check-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporaryDirectory);
@@ -45,6 +75,14 @@ Check(store.Save("global", valid, out var saved) == PolicySaveOutcome.Saved &&
 Check(store.Save("global", valid, out var current) == PolicySaveOutcome.Conflict &&
       current.Revision == 1, "optimistic concurrency");
 Check(store.Get("department:ti").Revision == 0, "scope isolation");
+var parallelSaves = Enumerable.Range(0, 20).AsParallel()
+    .Select(index => store.Save("department:concurrency", valid, out _)).ToArray();
+Check(parallelSaves.Count(outcome => outcome == PolicySaveOutcome.Saved) == 1 &&
+      parallelSaves.Count(outcome => outcome == PolicySaveOutcome.Conflict) == 19,
+    "concurrent writers preserve optimistic revision");
+var canonicalSave = valid with { Urls = new UrlPolicy([], ["https://BLOCKED.example:443"]) };
+Check(store.Save("department:canonical", canonicalSave, out var canonicalDraft) == PolicySaveOutcome.Saved &&
+      canonicalDraft.Urls.Blocked.Single() == "https://blocked.example/", "blocked URLs saved canonically");
 Check(SiteExceptionAddress.TryNormalizeOrigin("192.168.3.205/login", out var privateOrigin) &&
       privateOrigin == "http://192.168.3.205/", "private IP normalizes to HTTP origin");
 Check(SiteExceptionAddress.TryNormalizeOrigin("example.com/path", out var publicOrigin) &&
@@ -83,5 +121,5 @@ if (failures.Count > 0)
     Console.Error.WriteLine("Falhas: " + string.Join(", ", failures));
     return 1;
 }
-Console.WriteLine("21 verificações de políticas e exceções passaram.");
+Console.WriteLine($"{checkCount} verificações de políticas, exceções e telemetria passaram.");
 return 0;

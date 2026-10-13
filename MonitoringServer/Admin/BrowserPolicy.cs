@@ -53,7 +53,7 @@ public static partial class PolicyValidation
             CheckAllowedOrigins(request.Urls.Allowed, errors);
             CheckUrls(request.Urls.Blocked, "bloqueadas", errors);
             if (request.Urls.Allowed.Select(value => SiteExceptionAddress.TryNormalizeOrigin(value, out var origin) ? origin : value)
-                .Intersect(request.Urls.Blocked, StringComparer.OrdinalIgnoreCase).Any())
+                .Intersect(request.Urls.Blocked.Select(NormalizeWebUrl), StringComparer.OrdinalIgnoreCase).Any())
                 errors.Add("Uma URL não pode estar nas duas listas.");
         }
 
@@ -94,7 +94,7 @@ public static partial class PolicyValidation
         if (urls.Count > 200) { errors.Add($"Informe no máximo 200 URLs {label}."); return; }
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var url in urls)
-            if (!IsWebUrl(url) || !seen.Add(url)) errors.Add($"URL {label} inválida ou duplicada.");
+            if (!IsWebUrl(url) || !seen.Add(NormalizeWebUrl(url)!)) errors.Add($"URL {label} inválida ou duplicada.");
     }
 
     private static void CheckAllowedOrigins(IReadOnlyList<string> urls, List<string> errors)
@@ -111,4 +111,7 @@ public static partial class PolicyValidation
         (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) &&
         !string.IsNullOrEmpty(uri.Host) && string.IsNullOrEmpty(uri.UserInfo) &&
         string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment);
+
+    internal static string? NormalizeWebUrl(string? value) =>
+        IsWebUrl(value) ? new Uri(value!, UriKind.Absolute).AbsoluteUri : value;
 }

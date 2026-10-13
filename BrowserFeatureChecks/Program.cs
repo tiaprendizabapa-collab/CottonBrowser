@@ -12,6 +12,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        BrowserPaths.Initialize([], Path.Combine(Work, "browser-data"));
         Application.SetHighDpiMode(HighDpiMode.DpiUnaware); Application.EnableVisualStyles(); Directory.CreateDirectory(Work);
         DataChecks(); UiChecks();
         if (args.Contains("--webview"))
@@ -24,6 +25,17 @@ internal static class Program
     }
     private static void DataChecks()
     {
+        var parseSuggestions = Browser.GetType("LeanBrowser.SearchSuggestionClient")!
+            .GetMethod("ParseSuggestions", BindingFlags.Static | BindingFlags.NonPublic)!;
+        using (var response = JsonDocument.Parse("[null,42,\"invalid\",[],{}, {\"phrase\":null}, {\"phrase\":true}, {\"phrase\":\"\"}, {\"phrase\":\"algodão\"}]"))
+        {
+            var suggestions = (System.Collections.IList)parseSuggestions.Invoke(null, [response.RootElement])!;
+            Check(suggestions.Count == 1 && suggestions[0]!.GetType().GetProperty("Text")!.GetValue(suggestions[0]) as string == "algodão",
+                "Respostas de sugestões com itens inválidos devem preservar somente as sugestões válidas.");
+        }
+        using (var response = JsonDocument.Parse("{\"error\":\"unavailable\"}"))
+            Check(((System.Collections.IList)parseSuggestions.Invoke(null, [response.RootElement])!).Count == 0,
+                "Um erro do serviço de sugestões deve manter a navegação disponível.");
         var store = new BookmarkStore(Path.Combine(Work, "bookmarks.json"));
         File.WriteAllText(Path.Combine(Work, "bookmarks.json"), "[{\"Url\":\"https://old.example.com\",\"Title\":\"Antigo\"}]");
         Check(store.Load()[0].Folder == "", "Favoritos antigos devem ser preservados.");
@@ -82,6 +94,20 @@ internal static class Program
                     foreach (FlowLayoutPanel tools in view.Controls.OfType<FlowLayoutPanel>()) Check(tools.Height < view.Height - 80, "Ferramentas devem deixar espaço para a lista.");
                 }
             }
+        }
+        var damagedPath = Path.Combine(Work, "damaged-bookmarks.json");
+        File.WriteAllText(damagedPath, "{ incomplete");
+        using (var settings = new SettingsTab(_ => {}, () => {}, () => Array.Empty<Bookmark>(), () => {}, _ => {}, true, _ => {}))
+        {
+            typeof(SettingsTab).GetMethod("ConfigureBookmarks", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(settings, [new BookmarkStore(damagedPath), (Action)(() => {})]);
+            var manager = Get<Control>(settings, "_bookmarkManager");
+            Check(Get<Label>(manager, "_status").Text.Contains("preservado") && File.ReadAllText(damagedPath) == "{ incomplete",
+                "Favoritos corrompidos devem mostrar erro sem impedir as configurações ou alterar o arquivo.");
+            File.WriteAllText(damagedPath, "[{\"Url\":\"https://repaired.example\",\"Title\":\"Recuperado\"}]");
+            manager.GetType().GetMethod("Reload")!.Invoke(manager, [null]);
+            Check(Get<ListView>(manager, "_list").Items.Count == 1 && Get<Label>(manager, "_status").Text == "",
+                "Recarregar após recuperar o arquivo deve retirar o erro e exibir favoritos.");
         }
         using var tabs = new BrowserTabControl(); var allowlist = new SiteAllowlist(new SiteExceptionStore(Path.Combine(Work, "exceptions.json")));
         var alpha = new BrowserTab(allowlist) { Text = "Alpha", GroupName = "Trabalho", IsPinned = true }; var beta = new BrowserTab(allowlist) { Text = "Beta" };
