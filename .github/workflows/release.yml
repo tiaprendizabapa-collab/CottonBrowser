@@ -22,11 +22,11 @@ jobs:
         with:
           node-version: '22'
       - name: Verificar servidor e validação de políticas
-        run: dotnet run --project MonitoringServerChecks
+        run: dotnet run --project tests/MonitoringServerChecks
       - name: Verificar concorrência do painel e API HTTP
         run: |
-          node --experimental-vm-modules MonitoringServerChecks/AdminDashboardChecks.mjs
-          node MonitoringServerChecks/HttpApiChecks.mjs
+          node --experimental-vm-modules tests/MonitoringServerChecks/AdminDashboardChecks.mjs
+          node tests/MonitoringServerChecks/HttpApiChecks.mjs
 
   mobile:
     runs-on: ubuntu-latest
@@ -40,25 +40,25 @@ jobs:
         with:
           node-version: '22'
       - name: Verificar proteção do YouTube
-        run: node CottonMobile/checks/youtube_protection_check.js
+        run: node tests/CottonMobile/youtube_protection_check.js
       - name: Verificar filtros embarcados e proteção da página
         run: |
-          node CottonMobile/checks/build_filter_assets.js --check
-          node CottonMobile/checks/page_protection_check.js
+          node scripts/build-filter-assets.js --check
+          node tests/CottonMobile/page_protection_check.js
       - name: Verificar lista de bloqueio Android
         run: |
           mkdir -p "$RUNNER_TEMP/cotton-adblock-checks"
           javac -d "$RUNNER_TEMP/cotton-adblock-checks" \
-            CottonMobile/app/src/main/java/com/cottonbrowser/mobile/DomainBlocklist.java \
-            CottonMobile/app/src/main/java/com/cottonbrowser/mobile/RequestBlocklist.java \
-            CottonMobile/checks/BlocklistChecks.java \
-            CottonMobile/checks/RequestBlocklistChecks.java
+            src/CottonMobile/app/src/main/java/com/cottonbrowser/mobile/DomainBlocklist.java \
+            src/CottonMobile/app/src/main/java/com/cottonbrowser/mobile/RequestBlocklist.java \
+            tests/CottonMobile/BlocklistChecks.java \
+            tests/CottonMobile/RequestBlocklistChecks.java
           java -cp "$RUNNER_TEMP/cotton-adblock-checks" \
             com.cottonbrowser.mobile.BlocklistChecks \
-            CottonMobile/app/src/main/assets/blocklist.txt \
-            LeanBrowser/Assets/blocklist.txt
+            src/CottonMobile/app/src/main/assets/blocklist.txt \
+            src/LeanBrowser/Assets/blocklist.txt
           java -cp "$RUNNER_TEMP/cotton-adblock-checks" \
-            com.cottonbrowser.mobile.RequestBlocklistChecks CottonMobile/app/src/main/assets
+            com.cottonbrowser.mobile.RequestBlocklistChecks src/CottonMobile/app/src/main/assets
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -68,7 +68,7 @@ jobs:
       - name: Instalar SDK Android
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Compilar APK Android
-        run: gradle -p CottonMobile :app:assembleRelease --no-daemon
+        run: gradle -p src/CottonMobile :app:assembleRelease --no-daemon
       - name: Habilitar emulador Android
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -81,21 +81,21 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          script: gradle -p CottonMobile :app:connectedDebugAndroidTest --no-daemon
+          script: gradle -p src/CottonMobile :app:connectedDebugAndroidTest --no-daemon
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: android-protection-test-results
           path: |
-            CottonMobile/app/build/reports/androidTests
-            CottonMobile/app/build/outputs/androidTest-results
+            src/CottonMobile/app/build/reports/androidTests
+            src/CottonMobile/app/build/outputs/androidTest-results
       - name: Verificar assinatura do APK
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose CottonMobile/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose src/CottonMobile/app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: cottonbrowser-android-preview
-          path: CottonMobile/app/build/outputs/apk/release/app-release.apk
+          path: src/CottonMobile/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
   release:
@@ -114,21 +114,21 @@ jobs:
 
       - name: Verificar fluxo de atualização
         shell: pwsh
-        run: dotnet run --project BrowserUpdateChecks -c Release
+        run: dotnet run --project tests/BrowserUpdateChecks -c Release
 
       - name: Verificar trava durante atualização
         shell: pwsh
-        run: dotnet run --project CottonUpdaterChecks -c Release
+        run: dotnet run --project tests/CottonUpdaterChecks -c Release
 
       - name: Verificar downloads de mídia
         shell: pwsh
-        run: dotnet run --project MediaDownloadChecks -c Release
+        run: dotnet run --project tests/MediaDownloadChecks -c Release
 
       - name: Verificar sessão, abas, histórico, favoritos e recursos de navegação
         shell: pwsh
         run: |
           foreach ($project in @('SessionChecks', 'TabNavigationChecks', 'UrlChecks', 'NavigationHistoryChecks', 'TabMemoryChecks', 'BookmarkChecks', 'BrowserFeatureChecks', 'BrowserProductivityChecks')) {
-            dotnet run --project $project
+            dotnet run --project "tests/$project"
             if ($LASTEXITCODE -ne 0) { throw "Falha nas verificações: $project" }
           }
 
@@ -160,7 +160,7 @@ jobs:
 
             $latest = $versions | Sort-Object | Select-Object -Last 1
             $version = '{0}.{1}.{2}' -f $latest.Major, $latest.Minor, ($latest.Build + 1)
-            $project = [xml](Get-Content 'LeanBrowser/LeanBrowser.csproj' -Raw)
+            $project = [xml](Get-Content 'src/LeanBrowser/LeanBrowser.csproj' -Raw)
             $projectVersion = $project.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
             if ($projectVersion -match '^\d+\.\d+\.\d+$' -and [Version]$projectVersion -gt [Version]$version) {
               $version = $projectVersion
@@ -173,10 +173,10 @@ jobs:
             $version = $tag.Substring(1)
           }
 
-          ./build-installer.ps1 -Version $version
+          ./scripts/build-installer.ps1 -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar e empacotar o CottonBrowser.' }
 
-          dotnet run --project BrowserUpdateChecks -c Release -- --package CottonInstaller/dist/CottonBrowser-win-x64.zip
+          dotnet run --project tests/BrowserUpdateChecks -c Release -- --package src/CottonInstaller/dist/CottonBrowser-win-x64.zip
           if ($LASTEXITCODE -ne 0) { throw 'O pacote publicado não é aceito pelo atualizador do navegador.' }
 
           "COTTON_RELEASE_TAG=$tag" >> $env:GITHUB_ENV
@@ -185,11 +185,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: cottonbrowser-android-preview
-          path: CottonInstaller/dist
+          path: src/CottonInstaller/dist
 
       - name: Nomear APK Android
         shell: pwsh
-        run: Move-Item -LiteralPath CottonInstaller/dist/app-release.apk -Destination CottonInstaller/dist/CottonBrowser-Android-preview.apk
+        run: Move-Item -LiteralPath src/CottonInstaller/dist/app-release.apk -Destination src/CottonInstaller/dist/CottonBrowser-Android-preview.apk
 
       - name: Publicar Release
         shell: pwsh
@@ -198,9 +198,9 @@ jobs:
         run: |
           $arguments = @(
             'release', 'create', $env:COTTON_RELEASE_TAG,
-            'CottonInstaller/dist/CottonBrowser-win-x64.zip',
-            'CottonInstaller/dist/CottonBrowserSetup.exe',
-            'CottonInstaller/dist/CottonBrowser-Android-preview.apk',
+            'src/CottonInstaller/dist/CottonBrowser-win-x64.zip',
+            'src/CottonInstaller/dist/CottonBrowserSetup.exe',
+            'src/CottonInstaller/dist/CottonBrowser-Android-preview.apk',
             '--title', "CottonBrowser $env:COTTON_RELEASE_TAG"
           )
 

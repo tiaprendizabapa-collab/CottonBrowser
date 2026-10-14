@@ -2,8 +2,8 @@
 
 ## Instalação no menu Iniciar
 
-Execute `build-installer.cmd` na pasta principal para gerar
-`CottonInstaller/dist/CottonBrowserSetup.exe`. Ao abrir esse instalador e clicar
+Execute `scripts\build-installer.cmd` na pasta principal para gerar
+`src/CottonInstaller/dist/CottonBrowserSetup.exe`. Ao abrir esse instalador e clicar
 em **Instalar**, o navegador é copiado para
 `%LOCALAPPDATA%\Programs\CottonBrowser` e registrado no menu Iniciar e em
 **Aplicativos instalados** do Windows, sem exigir permissões de administrador.
@@ -27,9 +27,9 @@ versão mais recente, use **⋮ > Atualizar CottonBrowser** no navegador ou exec
 o `CottonBrowserSetup.exe` da [Release mais recente](https://github.com/tiaprendizabapa-collab/CottonBrowser/releases/latest).
 Feche o navegador antes de executar o setup. O perfil de navegação é preservado.
 
-Se o navegador é aberto pelo `run.cmd` da pasta do repositório, esse comando
+Se o navegador é aberto pelo `scripts\run.cmd` da pasta do repositório, esse comando
 recompila automaticamente quando os arquivos-fonte mudam. Para atualizar o
-executável manualmente, execute `build.cmd` e depois `run.cmd`. O menu Iniciar,
+executável manualmente, execute `scripts\build.cmd` e depois `scripts\run.cmd`. O menu Iniciar,
 quando instalado pelo setup, abre outra cópia em `%LOCALAPPDATA%\Programs\CottonBrowser`.
 
 O navegador verifica em segundo plano a última Release estável do repositório
@@ -46,11 +46,11 @@ preferências ficam em AppData e não são substituídos.
 
 ## Atualizar a instalação local durante o desenvolvimento
 
-Para aplicar mudanças locais, compile com `build.cmd` sem gerar outro setup.
+Para aplicar mudanças locais, compile com `scripts\build.cmd` sem gerar outro setup.
 Com todas as janelas do CottonBrowser fechadas, substitua `CottonBrowser.exe`,
 `CottonUpdater.exe` e os arquivos de `Assets\Bridge` da instalação em
 `%LOCALAPPDATA%\Programs\CottonBrowser` pelos arquivos publicados em
-`LeanBrowser\dist`. Abra o navegador pelo atalho habitual após a cópia.
+`src\LeanBrowser\dist`. Abra o navegador pelo atalho habitual após a cópia.
 Mantenha os demais arquivos da instalação e os dados de navegação em AppData.
 
 O instalador deve ser gerado apenas quando necessário para distribuição ou

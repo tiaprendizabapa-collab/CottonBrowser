@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\CottonUpdater\UpdateInstallGate.cs" Link="UpdateInstallGate.cs" />
+    <Compile Include="..\..\src\CottonUpdater\UpdateFileTransaction.cs" Link="UpdateFileTransaction.cs" />
+    <Compile Include="..\..\src\Shared\InstallationLock.cs" Link="InstallationLock.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\LeanBrowser\BrowserUpdateService.cs" Link="BrowserUpdateService.cs" />
+    <Compile Include="..\..\src\Shared\BrowserPackage.cs" Link="BrowserPackage.cs" />
+    <Compile Include="..\..\src\LeanBrowser\UpdateNoticePreferenceStore.cs" Link="UpdateNoticePreferenceStore.cs" />
+    <Compile Include="..\..\src\LeanBrowser\UpdateCheckHistoryStore.cs" Link="UpdateCheckHistoryStore.cs" />
+  </ItemGroup>
+</Project>

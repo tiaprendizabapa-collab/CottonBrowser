@@ -8,5 +8,5 @@
 **/monitoring-publish/
 **/.dotnet-*/
 **/.nuget-*/
-CottonInstaller/Payload.zip
+src/CottonInstaller/Payload.zip
 work/site-exceptions-build/
